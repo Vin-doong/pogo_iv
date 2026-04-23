@@ -1487,8 +1487,19 @@ def run_gui(gm):
 
     meta_label = tk.StringVar(value="")
     ttk.Label(meta_tab, textvariable=meta_label, font=("", 10)).pack(anchor="w", pady=(0, 4))
-    ttk.Label(meta_tab, text="출처: PvPoke overall 랭킹 · 행 더블클릭 → 좌측 리스트에 선택",
-              font=("", 8), foreground="#777").pack(anchor="w", pady=(0, 6))
+
+    meta_search_row = ttk.Frame(meta_tab)
+    meta_search_row.pack(fill="x", pady=(0, 4))
+    ttk.Label(meta_search_row, text="검색", font=("", 9)).pack(side="left", padx=(0, 4))
+    meta_search_var = tk.StringVar(value="")
+    meta_search_entry = ttk.Entry(meta_search_row, textvariable=meta_search_var, width=22)
+    meta_search_entry.pack(side="left")
+    ttk.Button(meta_search_row, text="✕", width=3,
+               command=lambda: (meta_search_var.set(""), refresh_meta(force=True))
+               ).pack(side="left", padx=(2, 8))
+    ttk.Label(meta_search_row,
+              text="한글/영문 sid 부분 일치 · 행 더블클릭 → 좌측 리스트 선택",
+              font=("", 8), foreground="#777").pack(side="left")
 
     meta_frame = ttk.Frame(meta_tab)
     meta_frame.pack(fill="both", expand=True)
@@ -1664,20 +1675,26 @@ def run_gui(gm):
         refresh_meta(force=True)
         messagebox.showinfo("완료", "데이터 업데이트 완료")
 
-    last_meta_league = [None]
+    last_meta_state = [(None, None)]  # (league, search_query)
 
     def refresh_meta(force=False):
         league_name = league_var.get()
-        if not force and last_meta_league[0] == league_name:
+        q = norm(meta_search_var.get())
+        state_key = (league_name, q)
+        if not force and last_meta_state[0] == state_key:
             return
-        last_meta_league[0] = league_name
+        last_meta_state[0] = state_key
         ranking = rankings.get(league_name, [])
-        meta_label.set(f"▼ {league_name} 메타 TOP 50  (전체 {len(ranking)}종 중)")
+
         for r in meta_tree.get_children():
             meta_tree.delete(r)
-        for i, entry in enumerate(ranking[:50], 1):
+
+        shown = 0
+        for i, entry in enumerate(ranking, 1):
             sid = entry.get("speciesId", "")
             disp = sid_to_display.get(sid, entry.get("speciesName", sid))
+            if q and q not in norm(disp) and q not in sid.lower():
+                continue
             score = entry.get("score", 0)
             moveset = entry.get("moveset") or []
             moves_str = " / ".join(prettify_move(m, move_ko_map) for m in moveset[:3])
@@ -1688,7 +1705,13 @@ def run_gui(gm):
                 f"{score:.1f}" if isinstance(score, (int, float)) else str(score),
                 moves_str,
             ), tags=(tag,))
+            shown += 1
         meta_tree.tag_configure("top", background="#fff9dd")
+
+        if q:
+            meta_label.set(f"▼ {league_name} · 검색 '{meta_search_var.get()}' → {shown}종 / 전체 {len(ranking)}종")
+        else:
+            meta_label.set(f"▼ {league_name} 메타 전체 {len(ranking)}종")
 
     ranking_cache = {}  # sid → {league_name: valid_ranked_list}
 
@@ -2321,6 +2344,16 @@ def run_gui(gm):
     listbox.bind("<Return>", lambda e: refresh())
     meta_tree.bind("<Double-Button-1>", on_meta_double)
     meta_tree.bind("<Return>", on_meta_double)
+
+    meta_search_pending = [None]
+    def on_meta_search(*_):
+        if meta_search_pending[0]:
+            root.after_cancel(meta_search_pending[0])
+        meta_search_pending[0] = root.after(150, refresh_meta)
+    meta_search_entry.bind("<KeyRelease>", on_meta_search)
+    meta_search_entry.bind("<Return>", lambda e: refresh_meta(force=True))
+    meta_search_entry.bind("<Escape>",
+        lambda e: (meta_search_var.set(""), refresh_meta(force=True)))
     for rb in league_row.winfo_children():
         if isinstance(rb, ttk.Radiobutton):
             rb.configure(command=refresh)
