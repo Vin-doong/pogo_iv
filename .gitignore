@@ -1,15 +1,16 @@
+# 런타임 캐시 (PvPoke 시즌 데이터 / PokeAPI CSV / Showdown sprite) — 첫 실행 시 자동 다운로드
+gamemaster.json
+rankings-*.json
+korean_names.csv
+moves.csv
+move_names.csv
+sprites/
+
+# 유저 로컬 상태
+favorites.json
+settings.json
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-
-# 사용자 로컬 상태 (첫 실행 시 자동 생성됨)
-settings.json
-favorites.json
-
-# IDE / OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db

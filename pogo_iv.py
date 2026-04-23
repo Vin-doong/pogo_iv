@@ -80,20 +80,127 @@ KOREAN_VARIANT_PREFIXES = [
     ("팔데아", "_paldean"),
 ]
 
-VARIANT_SUFFIXES = [
-    ("_shadow",    "섀도우 {}"),
-    ("_mega_x",    "메가 {} X"),
-    ("_mega_y",    "메가 {} Y"),
-    ("_mega",      "메가 {}"),
-    ("_alolan",    "알로라 {}"),
-    ("_alola",     "알로라 {}"),
-    ("_galarian",  "가라르 {}"),
-    ("_galar",     "가라르 {}"),
-    ("_hisuian",   "히스이 {}"),
-    ("_hisui",     "히스이 {}"),
-    ("_paldean",   "팔데아 {}"),
-    ("_paldea",    "팔데아 {}"),
+REGIONAL_VARIANTS = [
+    ("alolan",   "알로라"),
+    ("alola",    "알로라"),
+    ("galarian", "가라르"),
+    ("galar",    "가라르"),
+    ("hisuian",  "히스이"),
+    ("hisui",    "히스이"),
+    ("paldean",  "팔데아"),
+    ("paldea",   "팔데아"),
 ]
+
+MEGA_VARIANTS = [
+    ("mega_x", ("메가", " X")),
+    ("mega_y", ("메가", " Y")),
+    ("mega",   ("메가", "")),
+]
+
+# 폼 suffix → 한국 포고 공식/통용 표기
+FORM_KO = {
+    # 피카츄 코스튬 (PvP 의미 없지만 표시용)
+    "5th_anniversary": "5주년",
+    "flying":          "플라잉",
+    "horizons":        "호라이즌",
+    "kariyushi":       "카리유시",
+    "libre":           "리브레",
+    "pop_star":        "팝스타",
+    "rock_star":       "록스타",
+    "shaymin":         "쉐이미 스카프",
+    # 캐스퐁 · 도롱충이 · 체리꼬 (베이스와 동일 능력치 → 기본 숨김)
+    "rainy":     "비",
+    "snowy":     "눈",
+    "sunny":     "맑음",
+    "overcast":  "흐림",
+    "plant":     "풀나무",
+    "sandy":     "모래땅",
+    "trash":     "쓰레기",
+    # 켄타로스 (팔데아 폼)
+    "aqua":    "물",
+    "blaze":   "불꽃",
+    "combat":  "격투",
+    # 이벤트/갑옷 뮤츠
+    "armored": "아머드",
+    # 가이오가/그란돈 원시회귀
+    "primal":  "원시",
+    # 테오키스
+    "attack":  "어택",
+    "defense": "디펜스",
+    "speed":   "스피드",
+    # 로토무
+    "fan":    "스카이",
+    "frost":  "프로스트",
+    "heat":   "히트",
+    "mow":    "커트",
+    "wash":   "워시",
+    # 디아루가/펄기아/기라티나/쉐이미
+    "origin":  "오리진폼",
+    "altered": "어나더폼",
+    "land":    "랜드폼",
+    "sky":     "스카이폼",
+    # 불비달마
+    "standard":          "노말폼",
+    "galarian_standard": "가라르 노말폼",
+    # 토네로스/볼트로스/랜드로스/러브로스
+    "incarnate": "화신폼",
+    "therian":   "영물폼",
+    # 큐레무
+    "black": "블랙",
+    "white": "화이트",
+    # 케르디오
+    "ordinary": "평상시폼",
+    "resolute": "각오폼",
+    # 메로엣타
+    "aria":  "보이스폼",
+    # 게노세크트 카세트
+    "burn":  "바닥",
+    "chill": "아이스",
+    "douse": "물",
+    "shock": "번개",
+    # 암/수
+    "female": "암컷",
+    "male":   "수컷",
+    # 킬가르도
+    "shield": "실드폼",
+    # 호바귀/펌킨인 사이즈
+    "average": "보통 사이즈",
+    "large":   "큰 사이즈",
+    "small":   "작은 사이즈",
+    "super":   "특대 사이즈",
+    # 지가르데
+    "10":       "10% 폼",
+    "complete": "퍼펙트 폼",
+    # 후파
+    "unbound": "해방",
+    # 춤추새
+    "baile":   "이글이글스타일",
+    "pau":     "찰싹찰싹스타일",
+    "pom_pom": "팡파카스타일",
+    "sensu":   "둥실둥실스타일",
+    # 루가루암
+    "dusk":     "황혼의 모습",
+    "midday":   "한낮의 모습",
+    "midnight": "한밤중의 모습",
+    # 네크로즈마
+    "dawn_wings": "날개의 모습",
+    "dusk_mane":  "갈기의 모습",
+    # 모르페코
+    "full_belly": "배부른 모양",
+    # 자시안/자마젠타
+    "crowned_sword":  "검왕",
+    "crowned_shield": "방패왕",
+    "hero":           "용맹",
+    # 우라오스
+    "rapid_strike":  "연격의 태세",
+    "single_strike": "일격의 태세",
+    # 싸리용
+    "curly":    "컬리 모양",
+    "droopy":   "드로피 모양",
+    "stretchy": "스트레치 모양",
+    # 페르시온
+    "b": "B폼",
+}
 
 # 강화 비용: idx (= (level-1)*2) → (별의모래, 사탕, XL사탕) per power-up (+0.5 level)
 # idx 0 = L1.0→1.5, idx 78 = L40.0→40.5, ...
@@ -519,17 +626,22 @@ def get_family_chain(gm, species_id):
     p = by_sid.get(species_id)
     fam = p.get("family") if p else None
 
-    # family 없으면 베이스 sid로 fallback
+    # family 없으면 변형 suffix를 단계별로 벗겨내며 베이스 sid로 fallback
     if not fam:
         base = species_id
-        for suffix, _ in VARIANT_SUFFIXES:
-            if base.endswith(suffix):
-                base = base[: -len(suffix)]
-                if base in by_sid and by_sid[base].get("family"):
-                    p = by_sid[base]
-                    fam = p["family"]
-                    species_id = base
-                    break
+        stripped = False
+        if base.endswith("_shadow"):
+            base = base[: -len("_shadow")]; stripped = True
+        for key, _pair in MEGA_VARIANTS:
+            if base.endswith("_" + key):
+                base = base[: -(len(key) + 1)]; stripped = True; break
+        for key, _kor in REGIONAL_VARIANTS:
+            if base.endswith("_" + key):
+                base = base[: -(len(key) + 1)]; stripped = True; break
+        if stripped and base in by_sid and by_sid[base].get("family"):
+            p = by_sid[base]
+            fam = p["family"]
+            species_id = base
         if not fam:
             return []
 
@@ -574,37 +686,171 @@ def build_ko_base_map(gm, dex_to_ko):
     return ko_to_sid
 
 
+def _strip_variant_suffixes(sid):
+    """sid에서 shadow/mega/region 제거한 'clean' sid 반환 (form_suffix는 남김)."""
+    clean = sid
+    if clean.endswith("_shadow"):
+        clean = clean[: -len("_shadow")]
+    for key, _pair in MEGA_VARIANTS:
+        if clean.endswith("_" + key):
+            clean = clean[: -(len(key) + 1)]
+            break
+    for key, _kor in REGIONAL_VARIANTS:
+        if clean.endswith("_" + key):
+            clean = clean[: -(len(key) + 1)]
+            break
+    return clean
+
+
+def _decompose_sid(sid, by_sid, dex_common_base=None):
+    """sid → (base_sid, is_shadow, mega_pair, region_kor, form_suffix).
+    dex 번호가 같은 항목만 '폼'으로 취급 (porygon_z 같이 이름만 비슷한 별종은 베이스 유지).
+    by_sid에 prefix가 없을 때 dex_common_base[dex] 도 시도."""
+    this_dex = by_sid.get(sid, {}).get("dex")
+    is_shadow = False
+    rest = sid
+    if rest.endswith("_shadow"):
+        is_shadow = True
+        rest = rest[: -len("_shadow")]
+
+    mega_pair = ("", "")
+    for key, pair in MEGA_VARIANTS:
+        if rest.endswith("_" + key):
+            rest = rest[: -(len(key) + 1)]
+            mega_pair = pair
+            break
+
+    region_kor = ""
+    for key, kor in REGIONAL_VARIANTS:
+        if rest.endswith("_" + key):
+            rest = rest[: -(len(key) + 1)]
+            region_kor = kor
+            break
+
+    base_sid = rest
+    form_suffix = ""
+    parts = rest.split("_")
+    for i in range(len(parts) - 1, 0, -1):
+        pref = "_".join(parts[:i])
+        pref_p = by_sid.get(pref)
+        if pref_p and pref_p.get("dex") == this_dex:
+            base_sid = pref
+            form_suffix = "_".join(parts[i:])
+            break
+
+    if base_sid == rest and not form_suffix and dex_common_base:
+        cb = dex_common_base.get(this_dex, "")
+        if cb and cb != rest and rest.startswith(cb + "_"):
+            base_sid = cb
+            form_suffix = rest[len(cb) + 1:]
+
+    # form_suffix 안에 region이 prefix로 들어있으면 분리 (예: darmanitan_galarian_standard)
+    if form_suffix and not region_kor:
+        for key, kor in REGIONAL_VARIANTS:
+            if form_suffix == key:
+                region_kor = kor
+                form_suffix = ""
+                break
+            if form_suffix.startswith(key + "_"):
+                region_kor = kor
+                form_suffix = form_suffix[len(key) + 1:]
+                break
+    return base_sid, is_shadow, mega_pair, region_kor, form_suffix
+
+
+def _compose_display(base_name, is_shadow, mega_pair, region_kor, form_ko):
+    mega_p, mega_s = mega_pair
+    main = base_name
+    if mega_s:
+        main = f"{main}{mega_s}"
+    prefix_parts = []
+    if is_shadow:
+        prefix_parts.append("섀도우")
+    if mega_p:
+        prefix_parts.append(mega_p)
+    if region_kor:
+        prefix_parts.append(region_kor)
+    prefix_parts.append(main)
+    disp = " ".join(prefix_parts)
+    if form_ko:
+        disp = f"{disp} ({form_ko})"
+    return disp
+
+
 def build_display_entries(gm, dex_to_ko):
-    """GUI용: [(display_name, speciesId), ...] 전체 포켓몬 + 변형."""
+    """GUI용: [(display_name, speciesId), ...] 전체 released 포켓몬 + 변형.
+    같은 (dex, shadow, mega, region) 그룹 안에서 baseStats가 동일한 폼은
+    PvP 결과가 같으므로 1개만 통과시키고, 그룹 안에 stats 다른 폼이 있을 때만
+    폼 한글명을 표시한다."""
+    by_sid = {p.get("speciesId"): p for p in gm["pokemon"]}
+
+    dex_clean_sids = {}
+    for p in gm["pokemon"]:
+        if p.get("released", True) is False:
+            continue
+        sid = p.get("speciesId", "")
+        dex_clean_sids.setdefault(p.get("dex"), set()).add(_strip_variant_suffixes(sid))
+
+    dex_common_base = {}
+    for dex, sset in dex_clean_sids.items():
+        if len(sset) <= 1:
+            continue
+        slist = sorted(sset)
+        common = slist[0]
+        for s in slist[1:]:
+            while common and not s.startswith(common):
+                common = common[:-1]
+        common = common.rstrip("_")
+        if common:
+            dex_common_base[dex] = common
+
+    group_bs = {}
+    for p in gm["pokemon"]:
+        if p.get("released", True) is False:
+            continue
+        sid = p.get("speciesId", "")
+        _, is_shadow, mega_pair, region_kor, _ = _decompose_sid(sid, by_sid, dex_common_base)
+        bs = p.get("baseStats", {})
+        types_key = tuple(p.get("types", []))
+        bs_key = (bs.get("atk", 0), bs.get("def", 0), bs.get("hp", 0), types_key)
+        group_bs.setdefault(
+            (p.get("dex"), is_shadow, mega_pair, region_kor), set()
+        ).add(bs_key)
+
     entries = []
+    seen = set()
     for p in gm["pokemon"]:
         if p.get("released", True) is False:
             continue
         sid = p.get("speciesId", "")
         sname = p.get("speciesName", sid)
         dex = p.get("dex")
-        ko_base = dex_to_ko.get(dex)
 
-        display = None
-        for suffix, template in VARIANT_SUFFIXES:
-            if sid.endswith(suffix):
-                if ko_base:
-                    display = template.format(ko_base)
-                else:
-                    display = sname
-                break
-        if display is None:
-            if ko_base:
-                if "(" in sname:
-                    form = sname[sname.index("("):]  # "(5th Anniversary)" 등
-                    display = f"{ko_base} {form}"
-                else:
-                    display = ko_base
-            else:
-                display = sname
+        base_sid, is_shadow, mega_pair, region_kor, form_suffix = _decompose_sid(
+            sid, by_sid, dex_common_base
+        )
+        bs = p.get("baseStats", {})
+        types_key = tuple(p.get("types", []))
+        bs_key = (bs.get("atk", 0), bs.get("def", 0), bs.get("hp", 0), types_key)
+        dedupe_key = (dex, is_shadow, mega_pair, region_kor, bs_key)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        base_name = (
+            dex_to_ko.get(dex)
+            or by_sid.get(base_sid, {}).get("speciesName")
+            or sname
+        )
+
+        unique_bs = len(group_bs.get((dex, is_shadow, mega_pair, region_kor), set()))
+        form_ko = ""
+        if form_suffix and unique_bs > 1:
+            form_ko = FORM_KO.get(form_suffix, form_suffix.replace("_", " "))
+
+        display = _compose_display(base_name, is_shadow, mega_pair, region_kor, form_ko)
         entries.append((display, sid))
 
-    # display 중복 방지
     count = {}
     for d, _ in entries:
         count[d] = count.get(d, 0) + 1
@@ -941,8 +1187,13 @@ def run_gui(gm):
 
     # Preload league meta rankings (PvPoke overall)
     rankings = {}
+    rankings_index = {}  # league_name → {sid: 1-based rank}
     for lname, cap in LEAGUES:
-        rankings[lname] = load_league_rankings(cap)
+        rk = load_league_rankings(cap)
+        rankings[lname] = rk
+        rankings_index[lname] = {
+            e.get("speciesId", ""): i + 1 for i, e in enumerate(rk)
+        }
 
     # Korean move name map
     move_ko_map = load_move_ko_map()
@@ -1015,7 +1266,7 @@ def run_gui(gm):
     clear_button = ttk.Button(search_row, text="초기화", width=6)
     clear_button.pack(side="left", padx=(4, 0))
 
-    ttk.Label(left, text='입력 후 Enter · Esc로 초기화 · Ctrl+F 검색 포커스',
+    ttk.Label(left, text='Enter: 검색 · Esc: 초기화 · Ctrl+F: 포커스',
               font=("", 8), foreground="#777").pack(anchor="w", pady=(0, 4))
 
     fav_only_var = tk.BooleanVar(value=settings.get("fav_only", False))
@@ -1044,19 +1295,17 @@ def run_gui(gm):
     def update_data_status_label():
         age = _file_age_days(CACHE_GM)
         if age == float("inf"):
-            txt = "데이터 없음"
-        elif age < 1:
-            txt = f"데이터: {_format_age(CACHE_GM)} (오늘)"
-        else:
-            txt = f"데이터: {_format_age(CACHE_GM)} ({age:.0f}일 전)"
+            data_status_var.set("데이터 없음")
+            return
+        txt = f"데이터: {_format_age(CACHE_GM)}"
         if age > DATA_MAX_AGE_DAYS:
-            txt += "  ⚠ 오래됨"
+            txt += f"  ⚠ {age:.0f}일 전"
         data_status_var.set(txt)
 
     update_data_status_label()
     ttk.Label(left, textvariable=data_status_var, font=("", 8),
               foreground="#666").pack(anchor="w")
-    ttk.Button(left, text="데이터 업데이트 (시즌 갱신)",
+    ttk.Button(left, text="데이터 업데이트",
                command=lambda: do_data_refresh()).pack(fill="x", pady=(4, 0))
 
     # ===== Right: league + results =====
@@ -1108,10 +1357,6 @@ def run_gui(gm):
     evo_title = ttk.Label(evo_frame, text="진화:", font=("", 9, "bold"), foreground="#555")
     evo_title.pack(side="left", padx=(0, 6))
 
-    moveset_var = tk.StringVar(value="")
-    ttk.Label(info_stack, textvariable=moveset_var,
-              font=("", 9), foreground="#333").pack(anchor="w")
-
     # 타입 상성 (약점/내성)
     type_frame = ttk.Frame(info_stack)
     type_frame.pack(fill="x", pady=(2, 0))
@@ -1148,15 +1393,15 @@ def run_gui(gm):
               font=("", 9), foreground="#666").pack(side="left", padx=(18, 0))
 
     # 4 리그 한눈에 보는 요약 테이블 (행 클릭 → 아래 Top 100 갱신)
-    ttk.Label(iv_tab, text="▼ 리그별 한눈에 보기  (행 클릭 → 아래 Top 100 전환 · 비용 = 현재 Lv→베스트 Lv)",
+    ttk.Label(iv_tab, text="▼ 리그별 요약  (행 클릭 → Top 100 전환)",
               font=("", 9, "bold"), foreground="#333").pack(anchor="w", pady=(6, 3))
 
     sum_frame = ttk.Frame(iv_tab)
     sum_frame.pack(fill="x", pady=(0, 10))
 
-    sum_cols = ("league", "rank", "pct", "lvl", "cp", "best", "cost")
-    sum_labels_t = ["리그", "내 순위", "베스트대비", "레벨", "CP", "리그 베스트 IV", "강화비용"]
-    sum_widths = [120, 95, 85, 55, 65, 100, 220]
+    sum_cols = ("league", "meta", "rank", "pct", "lvl", "cp", "best", "cost")
+    sum_labels_t = ["리그", "메타 순위", "내 순위", "베스트대비", "레벨", "CP", "리그 베스트 IV", "강화비용"]
+    sum_widths = [110, 85, 90, 80, 55, 65, 100, 200]
     summary_tree = ttk.Treeview(sum_frame, columns=sum_cols, show="headings",
                                 height=4, selectmode="browse")
     for c, l, w in zip(sum_cols, sum_labels_t, sum_widths):
@@ -1197,7 +1442,7 @@ def run_gui(gm):
     moves_col = ttk.Frame(content_split)
     moves_col.pack(side="left", fill="both", expand=True)
 
-    ttk.Label(moves_col, text="▼ 보유 기술 & 사용률  (★=리그 추천 · ⚡=엘리트 기술 머신 필요 · 사용률=PvPoke 시뮬레이션 비율)",
+    ttk.Label(moves_col, text="▼ 보유 기술  (★=리그 추천 · ⚡=엘리트 기술 머신 · 사용률=PvPoke)",
               font=("", 9, "bold"), foreground="#333").pack(anchor="w", pady=(0, 4))
 
     moves_rec_var = tk.StringVar(value="")
@@ -1406,7 +1651,11 @@ def run_gui(gm):
         sid_to_display.update({s: d for d, s in new_entries})
         all_displays_full[:] = sorted(display_to_sid.keys(), key=lambda s: s.lower())
         for lname, cap in LEAGUES:
-            rankings[lname] = load_league_rankings(cap)
+            rk = load_league_rankings(cap)
+            rankings[lname] = rk
+            rankings_index[lname] = {
+                e.get("speciesId", ""): i + 1 for i, e in enumerate(rk)
+            }
         move_ko_map.clear()
         move_ko_map.update(load_move_ko_map())
         ranking_cache.clear()
@@ -1463,11 +1712,9 @@ def run_gui(gm):
 
         if rec_set:
             moveset_str = " / ".join(prettify_move(m, move_ko_map) for m in entry["moveset"][:3])
-            moves_rec_var.set(f"추천 기술 조합: {moveset_str}")
-            moveset_var.set(f"추천 기술 조합 ({league_name}): {moveset_str}")
+            moves_rec_var.set(f"추천 기술 조합 ({league_name}): {moveset_str}")
         else:
-            moves_rec_var.set("(이 리그 PvPoke 랭킹에 미등재 — 사용률 데이터 없음)")
-            moveset_var.set("")
+            moves_rec_var.set(f"({league_name} PvPoke 랭킹 미등재 — 사용률 데이터 없음)")
 
         uses_fast, uses_charged = {}, {}
         if entry and entry.get("moves"):
@@ -1656,7 +1903,6 @@ def run_gui(gm):
             clear_sprite()
             clear_moves_tab()
             clear_type_row()
-            moveset_var.set("")
             fav_btn_var.set("☆ 즐겨찾기")
             table_label.set("")
             my_iv_result.set("")
@@ -1706,8 +1952,7 @@ def run_gui(gm):
         user_iv = (a_, d_, h_) if a_ is not None and d_ is not None and h_ is not None else None
 
         info_var.set(
-            f"{disp}   |   {pokemon['speciesName']} ({pokemon['speciesId']})   |   "
-            f"종족값 공 {base['atk']} / 방 {base['def']} / 체 {base['hp']}"
+            f"{disp}   ·   종족값 공 {base['atk']} / 방 {base['def']} / 체 {base['hp']}"
         )
         render_evo_chain(sid)
         load_sprite(pokemon)
@@ -1757,9 +2002,15 @@ def run_gui(gm):
         for lname, _ in LEAGUES:
             m = metrics.get(lname)
             star = "★ " if best_lname == lname else "   "
+            meta_rk = rankings_index.get(lname, {}).get(sid)
+            meta_total = len(rankings.get(lname, []))
+            if meta_rk and meta_total:
+                meta_str = f"#{meta_rk}/{meta_total}"
+            else:
+                meta_str = "미등재"
             if m is None:
                 iid = summary_tree.insert("", "end", values=(
-                    f"{star}{lname}", "못 들어감", "—", "—", "—", "—", "—"
+                    f"{star}{lname}", meta_str, "못 들어감", "—", "—", "—", "—", "—"
                 ), tags=(lname,))
             elif m["user_entry"]:
                 _, sp, lvl_idx, cp = m["user_entry"]
@@ -1769,6 +2020,7 @@ def run_gui(gm):
                 cost = _cost_str(lvl_idx)
                 iid = summary_tree.insert("", "end", values=(
                     f"{star}{lname}",
+                    meta_str,
                     f"#{m['user_rank']}/4096",
                     f"{pct:.2f}%",
                     f"Lv{lvl:g}",
@@ -1778,11 +2030,10 @@ def run_gui(gm):
                 ), tags=(lname, "best") if best_lname == lname else (lname,))
             else:
                 top_iv = m["top_iv"]
-                # IV 미입력 → 리그 베스트 IV 기준 비용
                 top_idx = m["valid"][0][2]
                 cost = _cost_str(top_idx) if cur_idx is not None else "—"
                 iid = summary_tree.insert("", "end", values=(
-                    f"{star}{lname}", "-", "-",
+                    f"{star}{lname}", meta_str, "-", "-",
                     f"Lv{level_from_idx(top_idx):g}",
                     m["valid"][0][3],
                     f"{top_iv[0]}/{top_iv[1]}/{top_iv[2]}",
@@ -2008,7 +2259,6 @@ def run_gui(gm):
         clear_sprite()
         clear_moves_tab()
         clear_type_row()
-        moveset_var.set("")
         fav_btn_var.set("☆ 즐겨찾기")
         table_label.set("")
         my_iv_result.set("")
