@@ -1480,7 +1480,7 @@ def run_gui(gm):
     right = ttk.Frame(root, padding=(6, 12, 12, 12))
     right.pack(side="left", fill="both", expand=True)
 
-    # League selection row
+    # League selection row — 4개 빌트인 라디오 + 시즌 컵 콤보 (하이브리드)
     league_row = ttk.Frame(right)
     league_row.pack(fill="x", pady=(0, 8))
     ttk.Label(league_row, text="리그", font=("", 10, "bold")).pack(side="left", padx=(0, 10))
@@ -1490,16 +1490,52 @@ def run_gui(gm):
         cap_txt = f"({lg.cap})" if lg.cap else "(무제한)"
         return f"{lg.name} {cap_txt}"
 
-    league_choices = [_league_label(lg) for lg in LEAGUES]
-    league_label_to_name = {_league_label(lg): lg.name for lg in LEAGUES}
-    league_combo_var = tk.StringVar(value=_league_label(LEAGUES[1]))  # default 슈퍼리그
-    league_combo = ttk.Combobox(league_row, textvariable=league_combo_var,
-                                values=league_choices, state="readonly", width=28)
-    league_combo.pack(side="left", padx=4)
+    CUP_PLACEHOLDER = "— 시즌 컵 —"
+    cup_combo_var = tk.StringVar(value=CUP_PLACEHOLDER)
+    cup_label_to_name = {}
 
-    def _on_league_combo(_e=None):
-        league_var.set(league_label_to_name.get(league_combo_var.get(), "슈퍼리그"))
-    league_combo.bind("<<ComboboxSelected>>", lambda e: (_on_league_combo(e), refresh()))
+    def _select_builtin(name):
+        league_var.set(name)
+        cup_combo_var.set(CUP_PLACEHOLDER)
+        try:
+            refresh()
+        except NameError:
+            pass  # refresh 아직 미정의 (초기 setup 단계)
+
+    league_radios = []
+    for lg in _BUILTIN_LEAGUES:
+        cap_txt = f"({lg.cap})" if lg.cap else "(무제한)"
+        rb = ttk.Radiobutton(league_row, text=f"{lg.name} {cap_txt}",
+                             variable=league_var, value=lg.name,
+                             command=lambda n=lg.name: _select_builtin(n))
+        rb.pack(side="left", padx=4)
+        league_radios.append(rb)
+
+    ttk.Separator(league_row, orient="vertical").pack(side="left", fill="y", padx=10)
+    ttk.Label(league_row, text="시즌 컵", font=("", 9)).pack(side="left", padx=(0, 4))
+    cup_combo = ttk.Combobox(league_row, textvariable=cup_combo_var,
+                             values=[CUP_PLACEHOLDER], state="readonly", width=24)
+    cup_combo.pack(side="left", padx=2)
+
+    def _refresh_cup_choices():
+        """LEAGUES 가 변경되면 (data refresh 후 등) 컵 목록 재구성."""
+        builtin_names = {lg.name for lg in _BUILTIN_LEAGUES}
+        cup_leagues = [lg for lg in LEAGUES if lg.name not in builtin_names]
+        cup_label_to_name.clear()
+        cup_label_to_name.update({_league_label(lg): lg.name for lg in cup_leagues})
+        cup_combo["values"] = [CUP_PLACEHOLDER] + [_league_label(lg) for lg in cup_leagues]
+
+    _refresh_cup_choices()
+
+    def _on_cup_select(_e=None):
+        sel = cup_combo_var.get()
+        if sel and sel != CUP_PLACEHOLDER and sel in cup_label_to_name:
+            league_var.set(cup_label_to_name[sel])
+            try:
+                refresh()
+            except NameError:
+                pass
+    cup_combo.bind("<<ComboboxSelected>>", _on_cup_select)
 
     # Tabs
     notebook = ttk.Notebook(right)
@@ -1703,14 +1739,19 @@ def run_gui(gm):
 
     rev_top = ttk.Frame(rev_tab)
     rev_top.pack(fill="x", pady=(0, 8))
-    ttk.Label(rev_top, text="위 '내 개체값' 입력 → 4리그별 그 IV가 잘 어울리는 포켓몬",
+    ttk.Label(rev_top, text="개체값 입력 → 4리그별 그 IV가 잘 어울리는 포켓몬",
               font=("", 10, "bold")).pack(side="left")
 
     rev_input = ttk.Frame(rev_tab)
     rev_input.pack(fill="x", pady=(0, 8))
-    rev_iv_view = tk.StringVar(value="개체값: (Tab 1 에서 입력)")
-    ttk.Label(rev_input, textvariable=rev_iv_view,
-              font=("", 9), foreground="#555").pack(side="left")
+    ttk.Label(rev_input, text="공").pack(side="left", padx=(0, 2))
+    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=atk_var, width=4).pack(side="left")
+    ttk.Label(rev_input, text="방").pack(side="left", padx=(10, 2))
+    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=def_var, width=4).pack(side="left")
+    ttk.Label(rev_input, text="체").pack(side="left", padx=(10, 2))
+    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=hp_var, width=4).pack(side="left")
+    ttk.Label(rev_input, text="(Tab 1 과 공유)",
+              foreground="#888", font=("", 8)).pack(side="left", padx=(8, 0))
     ttk.Label(rev_input, text="  ·  메타 상위").pack(side="left", padx=(20, 2))
     rev_topn_var = tk.IntVar(value=200)
     ttk.Spinbox(rev_input, from_=50, to=500, increment=50,
@@ -1912,15 +1953,12 @@ def run_gui(gm):
             rankings_index[lg.name] = {
                 e.get("speciesId", ""): i + 1 for i, e in enumerate(rk)
             }
-        # 새 시즌에서 사라진 컵 / 랭킹 미공개 컵 드롭, 리그 선택 콤보박스 갱신
+        # 새 시즌에서 사라진 컵 / 랭킹 미공개 컵 드롭, 시즌 컵 콤보 갱신
         LEAGUES[:] = [lg for lg in LEAGUES if rankings.get(lg.name)]
-        new_choices = [_league_label(lg) for lg in LEAGUES]
-        league_label_to_name.clear()
-        league_label_to_name.update({_league_label(lg): lg.name for lg in LEAGUES})
-        league_combo["values"] = new_choices
-        if league_combo_var.get() not in new_choices:
-            league_combo_var.set(new_choices[1] if len(new_choices) > 1 else new_choices[0])
-            _on_league_combo()
+        _refresh_cup_choices()
+        # 현재 선택된 리그가 사라졌으면 슈퍼리그로 폴백
+        if not any(lg.name == league_var.get() for lg in LEAGUES):
+            _select_builtin("슈퍼리그")
         move_ko_map.clear()
         move_ko_map.update(load_move_ko_map())
         ranking_cache.clear()
@@ -2391,13 +2429,11 @@ def run_gui(gm):
                 return None
         a, d, h = _iv(atk_var), _iv(def_var), _iv(hp_var)
         if a is None or d is None or h is None:
-            rev_iv_view.set("개체값: (Tab 1 에서 0~15 정수 3개 입력 필요)")
             for tr in rev_trees.values():
                 for r in tr.get_children():
                     tr.delete(r)
             return
         user_iv = (a, d, h)
-        rev_iv_view.set(f"개체값: 공 {a} / 방 {d} / 체 {h}")
         topn = max(50, min(500, rev_topn_var.get() or 200))
         max_idx = len(CPM) - 1
         gm_pokemon = state["gm"]["pokemon"]
@@ -2583,7 +2619,16 @@ def run_gui(gm):
     def on_iv_change(*_):
         if iv_pending[0]:
             root.after_cancel(iv_pending[0])
-        iv_pending[0] = root.after(120, refresh)
+        iv_pending[0] = root.after(120, _iv_apply)
+
+    def _iv_apply():
+        refresh()
+        # 현재 IV로 포켓몬 찾기 탭 활성 시 그쪽도 자동 갱신
+        try:
+            if notebook.tab(notebook.select(), "text").strip() == "IV로 포켓몬 찾기":
+                refresh_reverse()
+        except Exception:
+            pass
 
     atk_var.trace_add("write", on_iv_change)
     def_var.trace_add("write", on_iv_change)
@@ -2629,7 +2674,11 @@ def run_gui(gm):
         if 0 <= idx < len(LEAGUES):
             lg = LEAGUES[idx]
             league_var.set(lg.name)
-            league_combo_var.set(_league_label(lg))
+            # 빌트인이면 컵 콤보 클리어, 컵이면 컵 콤보에 표시
+            if lg in _BUILTIN_LEAGUES:
+                cup_combo_var.set(CUP_PLACEHOLDER)
+            else:
+                cup_combo_var.set(_league_label(lg))
             refresh()
 
     root.bind("<Control-f>", _focus_search)
@@ -2684,7 +2733,8 @@ def run_gui(gm):
         for lg in LEAGUES:
             if lg.name == saved_lg:
                 league_var.set(lg.name)
-                league_combo_var.set(_league_label(lg))
+                if lg not in _BUILTIN_LEAGUES:
+                    cup_combo_var.set(_league_label(lg))
                 break
 
     update_listbox(force=True)
