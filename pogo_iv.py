@@ -516,6 +516,105 @@ TYPE_KO = {
     "steel": "강철", "fairy": "페어리",
 }
 
+# (species_base_id, move_id) → 획득 경로. PvPoke 의 eliteMoves 는 단일 boolean 이라
+# "커뮤데이/레이드/일반 엘리트 TM" 을 구분하지 못하므로, 신뢰도 높은 항목만
+# 직접 큐레이팅. 등록되지 않은 elite 항목은 "엘리트 TM" 으로 표시된다.
+SPECIAL_MOVE_SOURCE = {
+    # ─── 커뮤니티 데이 시그니처 기술 (CD 진화 시 학습 / 이후 엘리트 TM 필요) ─────
+    # 풀 스타터 — 마기라스 → 프렌지 플랜트
+    ("venusaur",   "FRENZY_PLANT"): "cd",
+    ("meganium",   "FRENZY_PLANT"): "cd",
+    ("sceptile",   "FRENZY_PLANT"): "cd",
+    ("torterra",   "FRENZY_PLANT"): "cd",
+    ("serperior",  "FRENZY_PLANT"): "cd",
+    ("chesnaught", "FRENZY_PLANT"): "cd",
+    ("decidueye",  "FRENZY_PLANT"): "cd",
+    ("rillaboom",  "FRENZY_PLANT"): "cd",
+    # 불꽃 스타터 → 블래스트 번
+    ("charizard",  "BLAST_BURN"): "cd",
+    ("typhlosion", "BLAST_BURN"): "cd",
+    ("blaziken",   "BLAST_BURN"): "cd",
+    ("infernape",  "BLAST_BURN"): "cd",
+    ("emboar",     "BLAST_BURN"): "cd",
+    ("delphox",    "BLAST_BURN"): "cd",
+    ("incineroar", "BLAST_BURN"): "cd",
+    ("cinderace",  "BLAST_BURN"): "cd",
+    # 물 스타터 → 하이드로 캐논
+    ("blastoise",  "HYDRO_CANNON"): "cd",
+    ("feraligatr", "HYDRO_CANNON"): "cd",
+    ("swampert",   "HYDRO_CANNON"): "cd",
+    ("empoleon",   "HYDRO_CANNON"): "cd",
+    ("samurott",   "HYDRO_CANNON"): "cd",
+    ("greninja",   "HYDRO_CANNON"): "cd",
+    ("primarina",  "HYDRO_CANNON"): "cd",
+    # 단일 라인 CD 시그니처
+    ("metagross",  "METEOR_MASH"):    "cd",  # 메탕 CD (2019.03)
+    ("mamoswine",  "ANCIENT_POWER"):  "cd",  # 꾸꾸리 CD (2019.02)
+    ("haxorus",    "BREAKING_SWIPE"): "cd",  # 압치 CD (2023.09)
+    ("altaria",    "MOONBLAST"):      "cd",  # 파비코리 CD (2019.04)
+    ("gardevoir",  "SYNCHRONOISE"):   "cd",  # 랄토스 CD (2020.08)
+    ("gallade",    "SYNCHRONOISE"):   "cd",  # 랄토스 CD
+    ("garchomp",   "EARTH_POWER"):    "cd",  # 딥상어동 CD (2022.06)
+    ("ampharos",   "DRAGON_PULSE"):   "cd",  # 메리프 CD (2018.04)
+    ("togekiss",   "AURA_SPHERE"):    "cd",  # 토게틱 CD (2025.05)
+    ("kingdra",    "WATER_GUN"):      "cd",  # 쏘드라 CD (2020.05)
+    ("charizard",  "DRAGON_BREATH"):  "cd",  # 파이리 CD 클래식 (2024.05)
+    # 이브이 + 진화체 시그니처 (이브이 CD 2018.08 + 2022.08 주말 이벤트)
+    ("eevee",    "LAST_RESORT"): "cd",
+    ("vaporeon", "LAST_RESORT"): "cd",
+    ("vaporeon", "SCALD"):       "cd",
+    ("jolteon",  "LAST_RESORT"): "cd",
+    ("jolteon",  "ZAP_CANNON"):  "cd",
+    ("flareon",  "LAST_RESORT"): "cd",
+    ("flareon",  "SUPER_POWER"): "cd",
+    ("espeon",   "LAST_RESORT"): "cd",
+    ("espeon",   "SHADOW_BALL"): "cd",
+    ("umbreon",  "LAST_RESORT"): "cd",
+    ("umbreon",  "PSYCHIC"):     "cd",
+    ("leafeon",  "LAST_RESORT"): "cd",
+    ("leafeon",  "BULLET_SEED"): "cd",
+    ("glaceon",  "LAST_RESORT"): "cd",
+    ("glaceon",  "WATER_PULSE"): "cd",
+    ("sylveon",  "LAST_RESORT"): "cd",
+    ("sylveon",  "PSYSHOCK"):    "cd",
+    # ─── 레이드 데이 / EX 레이드 / 특별 이벤트 시그니처 ──────────────────────
+    ("lugia",    "AEROBLAST"):      "raid",  # 레이드 데이 (2018.03)
+    ("ho_oh",    "SACRED_FIRE"):    "raid",  # 레이드 데이 (2018.08)
+    ("mewtwo",   "PSYSTRIKE"):      "raid",  # EX 레이드 (2018.09)
+    ("mewtwo",   "SHADOW_BALL"):    "raid",  # 한정 레이드 (2017.12)
+    ("rayquaza", "DRAGON_ASCENT"):  "raid",  # 유료 스페셜 리서치
+    ("rayquaza", "BREAKING_SWIPE"): "raid",  # 레이드 아워 (2023.05)
+}
+
+ACQ_LABEL = {
+    "cd":      "커뮤데이",
+    "raid":    "레이드",
+    "elite":   "엘리트 TM",
+    "regular": "",
+}
+
+
+def _species_base(sid):
+    """speciesId 에서 _shadow / _mega / _mega_x / _mega_y 접미사를 떼어 기본형 반환."""
+    while True:
+        for suf in ("_shadow", "_mega_x", "_mega_y", "_mega"):
+            if sid.endswith(suf):
+                sid = sid[:-len(suf)]
+                break
+        else:
+            return sid
+
+
+def move_acquisition(pokemon, move_id, elite_set):
+    """주어진 (포켓몬, 기술) 의 획득 경로 분류 → 'cd' / 'raid' / 'elite' / 'regular'."""
+    base = _species_base(pokemon.get("speciesId", ""))
+    cat = SPECIAL_MOVE_SOURCE.get((base, move_id))
+    if cat:
+        return cat
+    if move_id in elite_set:
+        return "elite"
+    return "regular"
+
 
 def load_move_ko_map(force=False):
     """PvPoke/PokeAPI 슬러그 ('mud-shot') → 한글 기술명 ('머드 샷')."""
@@ -1442,7 +1541,7 @@ def run_gui(gm):
     moves_col = ttk.Frame(content_split)
     moves_col.pack(side="left", fill="both", expand=True)
 
-    ttk.Label(moves_col, text="▼ 보유 기술  (★=리그 추천 · ⚡=엘리트 기술 머신 · 사용률=PvPoke)",
+    ttk.Label(moves_col, text="▼ 보유 기술  (★=리그 추천 · 획득=커뮤데이/레이드/엘리트 TM · 사용률=PvPoke)",
               font=("", 9, "bold"), foreground="#333").pack(anchor="w", pady=(0, 4))
 
     moves_rec_var = tk.StringVar(value="")
@@ -1453,9 +1552,9 @@ def run_gui(gm):
               font=("", 9, "bold")).pack(anchor="w", pady=(2, 2))
     fast_frame = ttk.Frame(moves_col)
     fast_frame.pack(fill="x", pady=(0, 8))
-    fast_cols = ("rec", "elite", "name", "type", "power", "energy", "turns", "pct")
-    fast_labels = ["★", "⚡", "기술", "타입", "위력", "에너지+", "턴", "사용률"]
-    fast_widths = [25, 25, 115, 55, 45, 55, 35, 60]
+    fast_cols = ("rec", "acq", "name", "type", "power", "energy", "turns", "pct")
+    fast_labels = ["★", "획득", "기술", "타입", "위력", "에너지+", "턴", "사용률"]
+    fast_widths = [22, 70, 95, 55, 45, 55, 35, 60]
     fast_anchors = ["center", "center", "w", "center", "center", "center", "center", "center"]
     fast_tree = ttk.Treeview(fast_frame, columns=fast_cols, show="headings", height=4)
     for c, l, w, a in zip(fast_cols, fast_labels, fast_widths, fast_anchors):
@@ -1469,9 +1568,9 @@ def run_gui(gm):
     charged_frame.pack(fill="both", expand=True)
     charged_scroll = ttk.Scrollbar(charged_frame, orient="vertical")
     charged_scroll.pack(side="right", fill="y")
-    charged_cols = ("rec", "elite", "name", "type", "power", "energy", "pct")
-    charged_labels = ["★", "⚡", "기술", "타입", "위력", "에너지", "사용률"]
-    charged_widths = [25, 25, 145, 55, 45, 50, 70]
+    charged_cols = ("rec", "acq", "name", "type", "power", "energy", "pct")
+    charged_labels = ["★", "획득", "기술", "타입", "위력", "에너지", "사용률"]
+    charged_widths = [22, 70, 125, 55, 45, 50, 70]
     charged_anchors = ["center", "center", "w", "center", "center", "center", "center"]
     charged_tree = ttk.Treeview(charged_frame, columns=charged_cols, show="headings",
                                 yscrollcommand=charged_scroll.set, height=14)
@@ -1765,7 +1864,7 @@ def run_gui(gm):
                     "uses": uses,
                     "pct": pct,
                     "rec": mid in rec_set,
-                    "elite": mid in elite_set,
+                    "acq": move_acquisition(pokemon, mid, elite_set),
                 })
             rows.sort(key=lambda r: (-(r["uses"] or 0), not r["rec"], r["name"]))
             return rows
@@ -1778,7 +1877,7 @@ def run_gui(gm):
             tag = "rec" if row["rec"] else ""
             fast_tree.insert("", "end", values=(
                 "★" if row["rec"] else "",
-                "⚡" if row["elite"] else "",
+                ACQ_LABEL.get(row["acq"], ""),
                 row["name"], row["type"], row["power"],
                 row["energy_gain"], row["turns"], pct_str,
             ), tags=(tag,))
@@ -1792,7 +1891,7 @@ def run_gui(gm):
             tag = "rec" if row["rec"] else ""
             charged_tree.insert("", "end", values=(
                 "★" if row["rec"] else "",
-                "⚡" if row["elite"] else "",
+                ACQ_LABEL.get(row["acq"], ""),
                 row["name"], row["type"], row["power"],
                 row["energy_cost"], pct_str,
             ), tags=(tag,))
