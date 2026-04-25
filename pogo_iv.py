@@ -70,7 +70,8 @@ LEAGUES = [
 ]
 
 KOREAN_VARIANT_PREFIXES = [
-    ("섀도우", "_shadow"),
+    ("그림자", "_shadow"),  # 한국 포고 공식 표기
+    ("섀도우", "_shadow"),  # 영문 음차 (구버전 호환)
     ("쉐도우", "_shadow"),
     ("섀도",   "_shadow"),
     ("메가",   "_mega"),
@@ -674,7 +675,7 @@ def sprite_variants_for(pokemon):
         s1 = s1.replace(k, v)
     s1 = s1.replace("_shadow", "").replace("_", "")
 
-    # 2) 변형 접미사 제거 + underscore flatten (섀도우/변형 → 베이스)
+    # 2) 변형 접미사 제거 + underscore flatten (그림자/변형 → 베이스)
     base = sid
     for k, _ in SHOWDOWN_VARIANT_TRANSFORMS:
         if base.endswith(k):
@@ -719,7 +720,7 @@ def get_family_chain(gm, species_id):
     """선택 포켓몬의 진화 단계 리스트 (단계별 sid 묶음).
     예: squirtle → [['squirtle'], ['wartortle'], ['blastoise']]
         eevee    → [['eevee'], ['vaporeon','jolteon',...]]
-    변형(섀도우/메가)일 경우 해당 변형의 family 우선, 없으면 베이스로.
+    변형(그림자/메가)일 경우 해당 변형의 family 우선, 없으면 베이스로.
     """
     by_sid = {p.get("speciesId"): p for p in gm["pokemon"]}
     p = by_sid.get(species_id)
@@ -864,7 +865,7 @@ def _compose_display(base_name, is_shadow, mega_pair, region_kor, form_ko):
         main = f"{main}{mega_s}"
     prefix_parts = []
     if is_shadow:
-        prefix_parts.append("섀도우")
+        prefix_parts.append("그림자")
     if mega_p:
         prefix_parts.append(mega_p)
     if region_kor:
@@ -1195,7 +1196,7 @@ def _pad(s, w):
 def analyze_cli(gm, ko_base_map, name, ivs, max_level):
     p, alts = find_pokemon_cli(gm, ko_base_map, name)
     if not p:
-        print(f"'{name}' — 찾을 수 없음. 예: 마릴리, 메가 갸라도스, 섀도우 뮤츠")
+        print(f"'{name}' — 찾을 수 없음. 예: 마릴리, 메가 갸라도스, 그림자 뮤츠")
         return
     if alts:
         print(f"[다른 후보: {', '.join(alts)}]")
