@@ -587,6 +587,49 @@ TYPE_KO = {
     "steel": "강철", "fairy": "페어리",
 }
 
+# 18타입 상성표 (공격 → 방어). PoGO PvP 배율: 1.6 / 1.0 / 0.625 / 0.390625.
+# 1.0 (보통) 인 조합은 dict 에서 생략.
+TYPES_ORDER = ["normal", "fire", "water", "electric", "grass", "ice",
+               "fighting", "poison", "ground", "flying", "psychic", "bug",
+               "rock", "ghost", "dragon", "dark", "steel", "fairy"]
+
+SE = 1.6        # super effective
+NVE = 0.625     # not very effective
+IMM = 0.390625  # double resist (PoGO 는 면역도 더블 저항으로 처리)
+
+TYPE_CHART = {
+    "normal":   {"rock": NVE, "ghost": IMM, "steel": NVE},
+    "fire":     {"fire": NVE, "water": NVE, "grass": SE, "ice": SE, "bug": SE,
+                 "rock": NVE, "dragon": NVE, "steel": SE},
+    "water":    {"fire": SE, "water": NVE, "grass": NVE, "ground": SE, "rock": SE, "dragon": NVE},
+    "electric": {"water": SE, "electric": NVE, "grass": NVE, "ground": IMM,
+                 "flying": SE, "dragon": NVE},
+    "grass":    {"fire": NVE, "water": SE, "grass": NVE, "poison": NVE, "ground": SE,
+                 "flying": NVE, "bug": NVE, "rock": SE, "dragon": NVE, "steel": NVE},
+    "ice":      {"fire": NVE, "water": NVE, "grass": SE, "ice": NVE, "ground": SE,
+                 "flying": SE, "dragon": SE, "steel": NVE},
+    "fighting": {"normal": SE, "ice": SE, "poison": NVE, "flying": NVE, "psychic": NVE,
+                 "bug": NVE, "rock": SE, "ghost": IMM, "dark": SE, "steel": SE, "fairy": NVE},
+    "poison":   {"grass": SE, "poison": NVE, "ground": NVE, "rock": NVE, "ghost": NVE,
+                 "steel": IMM, "fairy": SE},
+    "ground":   {"fire": SE, "electric": SE, "grass": NVE, "poison": SE, "flying": IMM,
+                 "bug": NVE, "rock": SE, "steel": SE},
+    "flying":   {"electric": NVE, "grass": SE, "fighting": SE, "bug": SE, "rock": NVE,
+                 "steel": NVE},
+    "psychic":  {"fighting": SE, "poison": SE, "psychic": NVE, "dark": IMM, "steel": NVE},
+    "bug":      {"fire": NVE, "grass": SE, "fighting": NVE, "poison": NVE, "flying": NVE,
+                 "psychic": SE, "ghost": NVE, "dark": SE, "steel": NVE, "fairy": NVE},
+    "rock":     {"fire": SE, "ice": SE, "fighting": NVE, "ground": NVE, "flying": SE,
+                 "bug": SE, "steel": NVE},
+    "ghost":    {"normal": IMM, "psychic": SE, "ghost": SE, "dark": NVE},
+    "dragon":   {"dragon": SE, "steel": NVE, "fairy": IMM},
+    "dark":     {"fighting": NVE, "psychic": SE, "ghost": SE, "dark": NVE, "fairy": NVE},
+    "steel":    {"fire": NVE, "water": NVE, "electric": NVE, "ice": SE, "rock": SE,
+                 "steel": NVE, "fairy": SE},
+    "fairy":    {"fire": NVE, "fighting": SE, "poison": NVE, "dragon": SE, "dark": SE,
+                 "steel": NVE},
+}
+
 # (species_base_id, move_id) → 획득 경로. PvPoke 의 eliteMoves 는 단일 boolean 이라
 # "커뮤데이/레이드/일반 엘리트 TM" 을 구분하지 못하므로, 신뢰도 높은 항목만
 # 직접 큐레이팅. 등록되지 않은 elite 항목은 "엘리트 TM" 으로 표시된다.
@@ -1803,6 +1846,68 @@ def run_gui(gm):
         cp_tree.column(c, width=w, anchor="center")
     cp_tree.pack(side="left", fill="both", expand=True)
     cp_scroll.config(command=cp_tree.yview)
+
+    # --- Tab 5: 타입 상성표 ---
+    type_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(type_tab, text="  타입 상성표  ")
+
+    ttk.Label(type_tab,
+              text="↓ 공격 타입  ·  → 방어 타입  (PoGO PvP 데미지 배율)",
+              font=("", 10, "bold")).pack(anchor="w", pady=(0, 6))
+
+    type_legend = ttk.Frame(type_tab)
+    type_legend.pack(anchor="w", pady=(0, 8))
+    for clr, txt in [("#7dcc7d", "1.6×  효과적"),
+                     ("#f0f0f0", "1×  보통"),
+                     ("#ffb37a", "0.625×  효과 없음"),
+                     ("#e57373", "0.39×  매우 효과 없음")]:
+        tk.Label(type_legend, text=txt, bg=clr, padx=8, pady=3,
+                 relief="solid", borderwidth=1, font=("", 9)
+                 ).pack(side="left", padx=(0, 6))
+
+    type_grid = ttk.Frame(type_tab)
+    type_grid.pack(anchor="nw")
+
+    # 좌상단 코너
+    tk.Label(type_grid, text="공\\방", font=("", 8, "bold"), width=5,
+             bg="#cdd5e0", relief="solid", borderwidth=1
+             ).grid(row=0, column=0, sticky="nsew")
+
+    # 헤더 (방어 타입, 가로)
+    for j, t in enumerate(TYPES_ORDER):
+        tk.Label(type_grid, text=TYPE_KO.get(t, t),
+                 font=("", 8, "bold"), width=5,
+                 bg="#cdd5e0", relief="solid", borderwidth=1
+                 ).grid(row=0, column=j + 1, sticky="nsew")
+
+    # 데이터 행 (공격 타입 = 행)
+    def _cell_for(mult):
+        if mult >= 1.5:
+            return "1.6", "#7dcc7d"
+        if mult <= 0.4:
+            return "0.39", "#e57373"
+        if mult <= 0.7:
+            return "0.625", "#ffb37a"
+        return "1", "#f0f0f0"
+
+    for i, atk in enumerate(TYPES_ORDER):
+        tk.Label(type_grid, text=TYPE_KO.get(atk, atk),
+                 font=("", 8, "bold"), width=5,
+                 bg="#cdd5e0", relief="solid", borderwidth=1
+                 ).grid(row=i + 1, column=0, sticky="nsew")
+        atk_row = TYPE_CHART.get(atk, {})
+        for j, dfd in enumerate(TYPES_ORDER):
+            mult = atk_row.get(dfd, 1.0)
+            txt, clr = _cell_for(mult)
+            tk.Label(type_grid, text=txt, font=("", 8), width=5,
+                     bg=clr, relief="solid", borderwidth=1
+                     ).grid(row=i + 1, column=j + 1, sticky="nsew")
+
+    ttk.Label(type_tab,
+              text="• 메인 시리즈와 달리 PoGO 는 면역(0×)이 없고 0.39× 더블 저항으로 처리됩니다.\n"
+                   "• 듀얼 타입 방어 시 곱셈으로 누적 → 최대 1.6²=2.56×, 최저 0.39²≈0.15×",
+              font=("", 8), foreground="#666", justify="left"
+              ).pack(anchor="w", pady=(8, 0))
 
     # ===== Actions =====
     last_query = [""]
