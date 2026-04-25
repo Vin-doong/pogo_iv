@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import urllib.request
+from collections import namedtuple
 
 if sys.platform == "win32":
     try:
@@ -31,7 +32,7 @@ GAMEMASTER_URLS = [
 KOREAN_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/pokemon_species_names.csv"
 MOVES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/moves.csv"
 MOVE_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/move_names.csv"
-RANKINGS_URL_TEMPLATE = "https://raw.githubusercontent.com/pvpoke/pvpoke/master/src/data/rankings/all/overall/rankings-{cap}.json"
+RANKINGS_URL_TEMPLATE = "https://raw.githubusercontent.com/pvpoke/pvpoke/master/src/data/rankings/{cup_id}/overall/rankings-{cap}.json"
 SPRITE_URL_BASE = "https://play.pokemonshowdown.com/sprites/gen5"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -62,12 +63,72 @@ SHOWDOWN_VARIANT_TRANSFORMS = [
     ("_paldea",    "-paldea"),
 ]
 
-LEAGUES = [
-    ("리틀컵",    500),
-    ("슈퍼리그",  1500),
-    ("하이퍼리그", 2500),
-    ("마스터리그", None),
+League = namedtuple("League", "name cup_id cap")
+
+# 항상 표시되는 4개 오픈 리그 (PvPoke `rankings/all/...` 사용)
+_BUILTIN_LEAGUES = [
+    League("리틀컵",     "all", 500),
+    League("슈퍼리그",   "all", 1500),
+    League("하이퍼리그", "all", 2500),
+    League("마스터리그", "all", None),
 ]
+
+# (cup_id, cp_cap) → 한글 표시명. PvPoke gamemaster.formats[].cup 를 키로 사용.
+# 매핑 없으면 formats[].title (영문) 그대로 표시.
+CUP_KO = {
+    # 마스터리그 변형
+    ("premier",          10000): "마스터리그 프리미어",
+    ("classic",          10000): "마스터리그 클래식",
+    ("battlefrontiermaster", 10000): "배틀프론티어 (마스터)",
+    # 하이퍼리그 변형
+    ("classic",          2500):  "하이퍼리그 클래식",
+    ("premier",          2500):  "하이퍼리그 프리미어",
+    ("bfretro",          2500):  "UL Retro 컵",
+    # 슈퍼리그 변형
+    ("classic",          1500):  "슈퍼리그 클래식",
+    ("premier",          1500):  "슈퍼리그 프리미어",
+    # 시즌 컵 (1500)
+    ("spring",           1500):  "봄 컵",
+    ("fantasy",          1500):  "판타지 컵",
+    ("bayou",            1500):  "바이유 컵",
+    ("spellcraft",       1500):  "주문 컵",
+    ("equinox",          1500):  "춘추분 컵",
+    ("maelstrom",        1500):  "마엘스트롬 컵",
+    ("catch",            1500):  "캐치 컵",
+    ("electric",         1500):  "전기 컵",
+    ("jungle",           1500):  "정글 컵",
+    ("chrono",           1500):  "지가르데 크로노 컵",
+    # 챔피언십/특수
+    ("naic2026",         1500):  "NAIC 2026 컵",
+    ("laic2025remix",    1500):  "LAIC 2025 리믹스",
+    ("championshipseries", 1500): "P!P 챔피언십 컵",
+}
+
+# 런타임 채워짐 (init_leagues 호출 후)
+LEAGUES: list[League] = list(_BUILTIN_LEAGUES)
+
+
+def init_leagues(gm):
+    """gamemaster.formats 에서 리그 목록을 동적으로 빌드. 빌트인 4개 + 시즌 컵."""
+    seen = {(lg.cup_id, lg.cap) for lg in _BUILTIN_LEAGUES}
+    # 빌트인 'all'/cap 과 동일한 풀인 cup_id 는 중복 (e.g. 'little' @ 500 == 'all' @ 500)
+    SKIP_CUPS = {("little", 500)}
+    extras = []
+    for f in gm.get("formats", []):
+        cup = f.get("cup")
+        cp = f.get("cp")
+        if not cup or not cp or cup in ("all", "custom"):
+            continue
+        key = (cup, cp)
+        if key in seen or key in SKIP_CUPS:
+            continue
+        seen.add(key)
+        ko = CUP_KO.get(key, f.get("title", cup))
+        extras.append(League(ko, cup, cp))
+    LEAGUES.clear()
+    LEAGUES.extend(_BUILTIN_LEAGUES)
+    LEAGUES.extend(extras)
+    return LEAGUES
 
 KOREAN_VARIANT_PREFIXES = [
     ("그림자", "_shadow"),  # 한국 포고 공식 표기
@@ -394,38 +455,47 @@ def load_korean_dex_map(force=False):
     return dex_to_ko
 
 
-def load_league_rankings(cap, force=False):
-    """PvPoke overall rankings for the league (score-desc sorted)."""
+def _ranking_cache_path(cup_id, c):
+    """'all' (오픈 리그) 은 기존 파일명 유지, 그 외엔 cup_id 포함."""
+    if cup_id == "all":
+        return os.path.join(SCRIPT_DIR, f"rankings-{c}.json")
+    return os.path.join(SCRIPT_DIR, f"rankings-{cup_id}-{c}.json")
+
+
+def load_league_rankings(cup_id, cap, force=False):
+    """PvPoke overall rankings for (cup_id, cap). score-desc sorted."""
     c = cap if cap is not None else 10000
-    path = os.path.join(SCRIPT_DIR, f"rankings-{c}.json")
-    _ensure_file(path, lambda p: _download(RANKINGS_URL_TEMPLATE.format(cap=c), p),
-                 f"리그 랭킹 cap={c}", DATA_MAX_AGE_DAYS, force)
+    path = _ranking_cache_path(cup_id, c)
+    url = RANKINGS_URL_TEMPLATE.format(cup_id=cup_id, cap=c)
+    _ensure_file(path, lambda p: _download(url, p),
+                 f"리그 랭킹 {cup_id}/{c}", DATA_MAX_AGE_DAYS, force)
     if not os.path.exists(path):
         return []
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        print(f"랭킹 파일 파싱 실패 (cap={c}): {e}")
+        print(f"랭킹 파일 파싱 실패 ({cup_id}/{c}): {e}")
         return []
 
 
 def refresh_all_data():
-    """모든 시즌별 데이터 강제 재다운로드. 새 gm 객체 + last-update timestamp 반환."""
-    load_gamemaster(force=True)
+    """모든 시즌별 데이터 강제 재다운로드. gm 갱신 후 LEAGUES 재구성."""
+    gm = load_gamemaster(force=True)
+    init_leagues(gm)
     load_korean_dex_map(force=True)
     load_move_ko_map(force=True)
-    for _, cap in LEAGUES:
-        load_league_rankings(cap, force=True)
+    for lg in LEAGUES:
+        load_league_rankings(lg.cup_id, lg.cap, force=True)
 
 
 def data_status():
     """[(label, path, age_days), ...] — 각 데이터 파일 현황."""
     items = [("게임마스터", CACHE_GM), ("한글 이름", CACHE_KO),
              ("기술 한글", CACHE_MOVE_NAMES)]
-    for lname, cap in LEAGUES:
-        c = cap if cap is not None else 10000
-        items.append((f"랭킹·{lname}", os.path.join(SCRIPT_DIR, f"rankings-{c}.json")))
+    for lg in LEAGUES:
+        c = lg.cap if lg.cap is not None else 10000
+        items.append((f"랭킹·{lg.name}", _ranking_cache_path(lg.cup_id, c)))
     return [(label, path, _file_age_days(path)) for label, path in items]
 
 
@@ -1117,8 +1187,8 @@ def analyze_pokemon(pokemon, ivs, max_level):
     base = pokemon["baseStats"]
     rows = []
     best_rec = None
-    for league_name, cap in LEAGUES:
-        ranked = rank_all(base, cap, max_idx)
+    for lg in LEAGUES:
+        ranked = rank_all(base, lg.cap, max_idx)
         top_sp = ranked[0][1]
         top_iv = ranked[0][0]
         user_entry = None
@@ -1129,14 +1199,14 @@ def analyze_pokemon(pokemon, ivs, max_level):
                 user_rank = rank_idx
                 break
         if user_entry is None or user_entry[2] == -1 or top_sp == 0:
-            rows.append((league_name, None, None, None, None, None, None))
+            rows.append((lg.name, None, None, None, None, None, None))
             continue
         _, sp, lvl_idx, cp = user_entry
         pct = sp / top_sp * 100
         lvl = level_from_idx(lvl_idx)
-        rows.append((league_name, lvl, cp, sp, user_rank, pct, top_iv))
+        rows.append((lg.name, lvl, cp, sp, user_rank, pct, top_iv))
         if best_rec is None or pct > best_rec[5]:
-            best_rec = (league_name, lvl, cp, sp, user_rank, pct, top_iv)
+            best_rec = (lg.name, lvl, cp, sp, user_rank, pct, top_iv)
     return rows, best_rec
 
 
@@ -1291,12 +1361,14 @@ def run_gui(gm):
     # Preload league meta rankings (PvPoke overall)
     rankings = {}
     rankings_index = {}  # league_name → {sid: 1-based rank}
-    for lname, cap in LEAGUES:
-        rk = load_league_rankings(cap)
-        rankings[lname] = rk
-        rankings_index[lname] = {
+    for lg in LEAGUES:
+        rk = load_league_rankings(lg.cup_id, lg.cap)
+        rankings[lg.name] = rk
+        rankings_index[lg.name] = {
             e.get("speciesId", ""): i + 1 for i, e in enumerate(rk)
         }
+    # PvPoke 가 랭킹을 공개하지 않은 컵 (e.g. championshipseries 404) 은 드롭다운에서 제거
+    LEAGUES[:] = [lg for lg in LEAGUES if rankings.get(lg.name)]
 
     # Korean move name map
     move_ko_map = load_move_ko_map()
@@ -1420,10 +1492,21 @@ def run_gui(gm):
     league_row.pack(fill="x", pady=(0, 8))
     ttk.Label(league_row, text="리그", font=("", 10, "bold")).pack(side="left", padx=(0, 10))
     league_var = tk.StringVar(value="슈퍼리그")
-    for lname, cap in LEAGUES:
-        cap_txt = f"({cap})" if cap else "(무제한)"
-        ttk.Radiobutton(league_row, text=f"{lname} {cap_txt}", variable=league_var,
-                        value=lname).pack(side="left", padx=4)
+
+    def _league_label(lg):
+        cap_txt = f"({lg.cap})" if lg.cap else "(무제한)"
+        return f"{lg.name} {cap_txt}"
+
+    league_choices = [_league_label(lg) for lg in LEAGUES]
+    league_label_to_name = {_league_label(lg): lg.name for lg in LEAGUES}
+    league_combo_var = tk.StringVar(value=_league_label(LEAGUES[1]))  # default 슈퍼리그
+    league_combo = ttk.Combobox(league_row, textvariable=league_combo_var,
+                                values=league_choices, state="readonly", width=28)
+    league_combo.pack(side="left", padx=4)
+
+    def _on_league_combo(_e=None):
+        league_var.set(league_label_to_name.get(league_combo_var.get(), "슈퍼리그"))
+    league_combo.bind("<<ComboboxSelected>>", lambda e: (_on_league_combo(e), refresh()))
 
     # Tabs
     notebook = ttk.Notebook(right)
@@ -1657,8 +1740,10 @@ def run_gui(gm):
     rev_split = ttk.Frame(rev_tab)
     rev_split.pack(fill="both", expand=True)
 
+    # 역검색 탭은 빌트인 4개 오픈 리그만 표시 (시즌 컵까지 나란히 두면 너무 좁음)
     rev_trees = {}
-    for lname, _ in LEAGUES:
+    for lg in _BUILTIN_LEAGUES:
+        lname = lg.name
         col = ttk.Frame(rev_split)
         col.pack(side="left", fill="both", expand=True, padx=2)
         ttk.Label(col, text=lname, font=("", 9, "bold")).pack(anchor="w")
@@ -1764,12 +1849,21 @@ def run_gui(gm):
         sid_to_display.clear()
         sid_to_display.update({s: d for d, s in new_entries})
         all_displays_full[:] = sorted(display_to_sid.keys(), key=lambda s: s.lower())
-        for lname, cap in LEAGUES:
-            rk = load_league_rankings(cap)
-            rankings[lname] = rk
-            rankings_index[lname] = {
+        for lg in LEAGUES:
+            rk = load_league_rankings(lg.cup_id, lg.cap)
+            rankings[lg.name] = rk
+            rankings_index[lg.name] = {
                 e.get("speciesId", ""): i + 1 for i, e in enumerate(rk)
             }
+        # 새 시즌에서 사라진 컵 / 랭킹 미공개 컵 드롭, 리그 선택 콤보박스 갱신
+        LEAGUES[:] = [lg for lg in LEAGUES if rankings.get(lg.name)]
+        new_choices = [_league_label(lg) for lg in LEAGUES]
+        league_label_to_name.clear()
+        league_label_to_name.update({_league_label(lg): lg.name for lg in LEAGUES})
+        league_combo["values"] = new_choices
+        if league_combo_var.get() not in new_choices:
+            league_combo_var.set(new_choices[1] if len(new_choices) > 1 else new_choices[0])
+            _on_league_combo()
         move_ko_map.clear()
         move_ko_map.update(load_move_ko_map())
         ranking_cache.clear()
@@ -2060,9 +2154,9 @@ def run_gui(gm):
             ranking_cache.clear()
             ranking_cache["_sid"] = sid
             max_idx = len(CPM) - 1
-            for lname, cap in LEAGUES:
-                r = rank_all(base, cap, max_idx)
-                ranking_cache[lname] = [e for e in r if e[2] != -1]
+            for lg in LEAGUES:
+                r = rank_all(base, lg.cap, max_idx)
+                ranking_cache[lg.name] = [e for e in r if e[2] != -1]
 
         # Parse user IV — StringVar 비어있으면 None
         def _iv(sv):
@@ -2086,7 +2180,8 @@ def run_gui(gm):
 
         # Per-league metrics
         metrics = {}
-        for lname, _ in LEAGUES:
+        for lg in LEAGUES:
+            lname = lg.name
             valid = ranking_cache.get(lname, [])
             if not valid:
                 metrics[lname] = None
@@ -2125,7 +2220,8 @@ def run_gui(gm):
             xl_str = f" · XL의사탕 {x}" if x else ""
             return f"별의모래 {d:,} · 사탕 {c}{xl_str}"
 
-        for lname, _ in LEAGUES:
+        for lg in LEAGUES:
+            lname = lg.name
             m = metrics.get(lname)
             star = "★ " if best_lname == lname else "   "
             meta_rk = rankings_index.get(lname, {}).get(sid)
@@ -2247,7 +2343,9 @@ def run_gui(gm):
         gm_pokemon = state["gm"]["pokemon"]
         by_sid = {p["speciesId"]: p for p in gm_pokemon}
 
-        for lname, cap in LEAGUES:
+        for lg in _BUILTIN_LEAGUES:
+            lname = lg.name
+            cap = lg.cap
             tr = rev_trees[lname]
             for r in tr.get_children():
                 tr.delete(r)
@@ -2469,12 +2567,15 @@ def run_gui(gm):
 
     def _switch_league(idx, _e=None):
         if 0 <= idx < len(LEAGUES):
-            league_var.set(LEAGUES[idx][0])
+            lg = LEAGUES[idx]
+            league_var.set(lg.name)
+            league_combo_var.set(_league_label(lg))
             refresh()
 
     root.bind("<Control-f>", _focus_search)
     root.bind("<Control-F>", _focus_search)
-    for i, (lname, _) in enumerate(LEAGUES, 1):
+    # 키보드 1~9 단축키는 앞쪽 9개 리그까지만 (시즌 컵이 늘어나도 초과분은 콤보박스 사용)
+    for i, lg in enumerate(LEAGUES[:9], 1):
         root.bind(f"<Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
     root.bind("<Control-r>", lambda e: do_data_refresh())
 
@@ -2493,8 +2594,12 @@ def run_gui(gm):
 
     # 저장된 리그 복원
     saved_lg = settings.get("league")
-    if saved_lg and any(saved_lg == n for n, _ in LEAGUES):
-        league_var.set(saved_lg)
+    if saved_lg:
+        for lg in LEAGUES:
+            if lg.name == saved_lg:
+                league_var.set(lg.name)
+                league_combo_var.set(_league_label(lg))
+                break
 
     update_listbox(force=True)
     root.after(150, poll)
@@ -2522,6 +2627,7 @@ def main():
         print("=== 갱신 완료 ===\n")
 
     gm = load_gamemaster()
+    init_leagues(gm)
 
     if args.cli or args.pokemon:
         run_cli(args, gm)
