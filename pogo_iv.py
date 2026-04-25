@@ -307,51 +307,6 @@ POWER_UP_COST = [
 ]
 
 # PoGO 타입 상성 배수 (메인 시리즈와 다름)
-TYPE_MULT_SE = 1.6     # super effective
-TYPE_MULT_NVE = 0.625  # not very effective
-TYPE_MULT_NE = 0.390625  # immune (메인은 0배, PoGO는 0.39)
-
-# attacker → list of (defender, multiplier)
-TYPE_CHART = {
-    "normal":  {"rock": "nve", "steel": "nve", "ghost": "ne"},
-    "fire":    {"grass": "se", "ice": "se", "bug": "se", "steel": "se",
-                "fire": "nve", "water": "nve", "rock": "nve", "dragon": "nve"},
-    "water":   {"fire": "se", "ground": "se", "rock": "se",
-                "water": "nve", "grass": "nve", "dragon": "nve"},
-    "electric":{"water": "se", "flying": "se",
-                "electric": "nve", "grass": "nve", "dragon": "nve", "ground": "ne"},
-    "grass":   {"water": "se", "ground": "se", "rock": "se",
-                "fire": "nve", "grass": "nve", "poison": "nve", "flying": "nve",
-                "bug": "nve", "dragon": "nve", "steel": "nve"},
-    "ice":     {"grass": "se", "ground": "se", "flying": "se", "dragon": "se",
-                "fire": "nve", "water": "nve", "ice": "nve", "steel": "nve"},
-    "fighting":{"normal": "se", "ice": "se", "rock": "se", "dark": "se", "steel": "se",
-                "poison": "nve", "flying": "nve", "psychic": "nve", "bug": "nve",
-                "fairy": "nve", "ghost": "ne"},
-    "poison":  {"grass": "se", "fairy": "se",
-                "poison": "nve", "ground": "nve", "rock": "nve", "ghost": "nve",
-                "steel": "ne"},
-    "ground":  {"fire": "se", "electric": "se", "poison": "se", "rock": "se", "steel": "se",
-                "grass": "nve", "bug": "nve", "flying": "ne"},
-    "flying":  {"grass": "se", "fighting": "se", "bug": "se",
-                "electric": "nve", "rock": "nve", "steel": "nve"},
-    "psychic": {"fighting": "se", "poison": "se",
-                "psychic": "nve", "steel": "nve", "dark": "ne"},
-    "bug":     {"grass": "se", "psychic": "se", "dark": "se",
-                "fire": "nve", "fighting": "nve", "poison": "nve", "flying": "nve",
-                "ghost": "nve", "steel": "nve", "fairy": "nve"},
-    "rock":    {"fire": "se", "ice": "se", "flying": "se", "bug": "se",
-                "fighting": "nve", "ground": "nve", "steel": "nve"},
-    "ghost":   {"psychic": "se", "ghost": "se", "dark": "nve", "normal": "ne"},
-    "dragon":  {"dragon": "se", "steel": "nve", "fairy": "ne"},
-    "dark":    {"psychic": "se", "ghost": "se",
-                "fighting": "nve", "dark": "nve", "fairy": "nve"},
-    "steel":   {"ice": "se", "rock": "se", "fairy": "se",
-                "fire": "nve", "water": "nve", "electric": "nve", "steel": "nve"},
-    "fairy":   {"fighting": "se", "dragon": "se", "dark": "se",
-                "fire": "nve", "poison": "nve", "steel": "nve"},
-}
-
 CPM = [
     0.094, 0.135137432, 0.16639787, 0.192650919, 0.21573247, 0.236572661,
     0.25572005, 0.273530381, 0.29024988, 0.306057377, 0.3210876, 0.335445036,
@@ -1189,13 +1144,7 @@ def type_effectiveness(types):
     for atk in TYPE_CHART:
         mult = 1.0
         for d in types:
-            tag = TYPE_CHART[atk].get(d)
-            if tag == "se":
-                mult *= TYPE_MULT_SE
-            elif tag == "nve":
-                mult *= TYPE_MULT_NVE
-            elif tag == "ne":
-                mult *= TYPE_MULT_NE
+            mult *= TYPE_CHART[atk].get(d, 1.0)
         result[atk] = mult
     return result
 
@@ -1459,7 +1408,7 @@ def run_gui(gm):
         root.geometry(geom)
     except Exception:
         root.geometry("1360x840")
-    root.minsize(1100, 700)
+    root.minsize(1280, 740)
 
     try:
         style = ttk.Style()
@@ -1488,7 +1437,8 @@ def run_gui(gm):
               font=("", 8), foreground="#777").pack(anchor="w", pady=(0, 4))
 
     fav_only_var = tk.BooleanVar(value=settings.get("fav_only", False))
-    ttk.Checkbutton(left, text=f"★ 즐겨찾기만 보기  ({len(favorites)}개)",
+    fav_count_var = tk.StringVar(value=f"★ 즐겨찾기만 보기  ({len(favorites)}개)")
+    ttk.Checkbutton(left, textvariable=fav_count_var,
                     variable=fav_only_var,
                     command=lambda: trigger_search()).pack(anchor="w", pady=(0, 4))
 
@@ -1753,21 +1703,15 @@ def run_gui(gm):
 
     rev_top = ttk.Frame(rev_tab)
     rev_top.pack(fill="x", pady=(0, 8))
-    ttk.Label(rev_top, text="개체값 입력 → 4리그별 그 IV가 잘 어울리는 포켓몬",
+    ttk.Label(rev_top, text="위 '내 개체값' 입력 → 4리그별 그 IV가 잘 어울리는 포켓몬",
               font=("", 10, "bold")).pack(side="left")
 
     rev_input = ttk.Frame(rev_tab)
     rev_input.pack(fill="x", pady=(0, 8))
-    ttk.Label(rev_input, text="공").pack(side="left", padx=(0, 2))
-    rev_a_var = tk.StringVar(value="")
-    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=rev_a_var, width=4).pack(side="left")
-    ttk.Label(rev_input, text="방").pack(side="left", padx=(10, 2))
-    rev_d_var = tk.StringVar(value="")
-    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=rev_d_var, width=4).pack(side="left")
-    ttk.Label(rev_input, text="체").pack(side="left", padx=(10, 2))
-    rev_h_var = tk.StringVar(value="")
-    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=rev_h_var, width=4).pack(side="left")
-    ttk.Label(rev_input, text="  메타 상위").pack(side="left", padx=(20, 2))
+    rev_iv_view = tk.StringVar(value="개체값: (Tab 1 에서 입력)")
+    ttk.Label(rev_input, textvariable=rev_iv_view,
+              font=("", 9), foreground="#555").pack(side="left")
+    ttk.Label(rev_input, text="  ·  메타 상위").pack(side="left", padx=(20, 2))
     rev_topn_var = tk.IntVar(value=200)
     ttk.Spinbox(rev_input, from_=50, to=500, increment=50,
                 textvariable=rev_topn_var, width=5).pack(side="left")
@@ -1925,7 +1869,15 @@ def run_gui(gm):
         for d in filtered:
             listbox.insert(tk.END, display_with_star(d))
         suffix = " (즐겨찾기)" if fo else ""
-        count_var.set(f"{len(filtered)}종 표시 / 전체 {len(all_displays_full)}종{suffix}")
+        if not filtered:
+            if fo and not favorites:
+                count_var.set("⚠ 즐겨찾기 없음 — 포켓몬 선택 후 ☆ 버튼")
+            elif q:
+                count_var.set(f"⚠ '{q}' 검색 결과 없음 — 다른 단어로 시도")
+            else:
+                count_var.set("⚠ 표시할 포켓몬 없음")
+        else:
+            count_var.set(f"{len(filtered)}종 표시 / 전체 {len(all_displays_full)}종{suffix}")
         if filtered and auto_select:
             listbox.selection_clear(0, tk.END)
             listbox.selection_set(0)
@@ -2106,7 +2058,8 @@ def run_gui(gm):
                 w.destroy()
 
     def clear_sprite():
-        sprite_label.config(image="")
+        sprite_label.config(image="", text="이미지\n없음", fg="#bbb",
+                            font=("", 9), anchor="center", justify="center")
         sprite_label.image = None
 
     def load_sprite(pokemon):
@@ -2116,7 +2069,7 @@ def run_gui(gm):
             return
         try:
             img = tk.PhotoImage(file=path)
-            sprite_label.config(image=img)
+            sprite_label.config(image=img, text="")
             sprite_label.image = img  # keep ref (tk GC)
         except Exception:
             clear_sprite()
@@ -2174,16 +2127,16 @@ def run_gui(gm):
         ttk.Label(type_inner, text=f"[{types_str}]",
                   font=("", 9, "bold"), foreground="#333").pack(side="left", padx=(0, 8))
         eff = type_effectiveness(types)
-        # 4x, 2x = weakness; 0.5x, 0.25x, 0.39x = resistance
-        x4 = sorted([t for t, m in eff.items() if m > 1.6])
-        x2 = sorted([t for t, m in eff.items() if 1.0 < m <= 1.6])
-        x05 = sorted([t for t, m in eff.items() if 0.4 < m < 1.0])
-        x025 = sorted([t for t, m in eff.items() if m <= 0.4])
+        # PoGO 실제 배수: 1.6 / 0.625 / 0.39 단일, 듀얼은 곱셈 (2.56 / 0.244 / 0.152 등)
+        big_w   = sorted([t for t, m in eff.items() if m > 1.6])      # 2.56× (듀얼 약점 중첩)
+        w       = sorted([t for t, m in eff.items() if 1.0 < m <= 1.6])  # 1.6× 단일
+        r       = sorted([t for t, m in eff.items() if 0.5 < m < 1.0])    # 0.625×
+        big_r   = sorted([t for t, m in eff.items() if m <= 0.5])         # 0.39× 이하
         for label, lst, color in [
-            ("4×약점", x4, "#c00"),
-            ("2×약점", x2, "#e70"),
-            ("0.5×내성", x05, "#070"),
-            ("0.39×이중내성", x025, "#055"),
+            ("2.56× 약점",     big_w, "#c00"),
+            ("1.6× 약점",       w,     "#e70"),
+            ("0.625× 내성",     r,     "#070"),
+            ("0.39×↓ 이중내성", big_r, "#055"),
         ]:
             if lst:
                 names = " ".join(TYPE_KO.get(t, t) for t in lst)
@@ -2211,7 +2164,7 @@ def run_gui(gm):
         listbox.insert(idx_before, display_with_star(disp))
         listbox.selection_set(idx_before)
         update_fav_btn(sid)
-        # Checkbox 라벨 업데이트는 trace 없이 단순화 — 다음 토글 시 보임
+        fav_count_var.set(f"★ 즐겨찾기만 보기  ({len(favorites)}개)")
 
     def update_fav_btn(sid):
         if sid in favorites:
@@ -2436,13 +2389,15 @@ def run_gui(gm):
                 return v if 0 <= v <= 15 else None
             except (ValueError, AttributeError):
                 return None
-        a, d, h = _iv(rev_a_var), _iv(rev_d_var), _iv(rev_h_var)
+        a, d, h = _iv(atk_var), _iv(def_var), _iv(hp_var)
         if a is None or d is None or h is None:
+            rev_iv_view.set("개체값: (Tab 1 에서 0~15 정수 3개 입력 필요)")
             for tr in rev_trees.values():
                 for r in tr.get_children():
                     tr.delete(r)
             return
         user_iv = (a, d, h)
+        rev_iv_view.set(f"개체값: 공 {a} / 방 {d} / 체 {h}")
         topn = max(50, min(500, rev_topn_var.get() or 200))
         max_idx = len(CPM) - 1
         gm_pokemon = state["gm"]["pokemon"]
@@ -2679,10 +2634,36 @@ def run_gui(gm):
 
     root.bind("<Control-f>", _focus_search)
     root.bind("<Control-F>", _focus_search)
-    # 키보드 1~9 단축키는 앞쪽 9개 리그까지만 (시즌 컵이 늘어나도 초과분은 콤보박스 사용)
+    # 리그 단축키 1~9 — Alt+숫자로 변경 (Bare 숫자는 검색창/IV 입력에서 가로채면 안 됨)
     for i, lg in enumerate(LEAGUES[:9], 1):
-        root.bind(f"<Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
+        root.bind(f"<Alt-Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
     root.bind("<Control-r>", lambda e: do_data_refresh())
+
+    # IV 역검색 탭으로 전환 시 자동으로 결과 갱신 (Tab 1 IV 공유)
+    def _on_tab_changed(_e=None):
+        try:
+            if notebook.tab(notebook.select(), "text").strip() == "IV로 포켓몬 찾기":
+                refresh_reverse()
+        except Exception:
+            pass
+    notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
+
+    # 검색창에서 ↓/↑/Enter → 리스트박스 네비게이션
+    def _search_arrow(direction):
+        size = listbox.size()
+        if size == 0:
+            return "break"
+        cur = listbox.curselection()
+        new_idx = (cur[0] + direction) if cur else (0 if direction > 0 else size - 1)
+        new_idx = max(0, min(size - 1, new_idx))
+        listbox.selection_clear(0, tk.END)
+        listbox.selection_set(new_idx)
+        listbox.activate(new_idx)
+        listbox.see(new_idx)
+        refresh()
+        return "break"
+    search_entry.bind("<Down>", lambda e: _search_arrow(1))
+    search_entry.bind("<Up>", lambda e: _search_arrow(-1))
 
     # 종료 시 설정 저장
     def on_close():
