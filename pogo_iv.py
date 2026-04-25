@@ -1193,7 +1193,7 @@ def _pad(s, w):
     return str(s) + " " * max(w - _dwidth(s), 0)
 
 
-def analyze_cli(gm, ko_base_map, name, ivs, max_level):
+def analyze_cli(gm, ko_base_map, sid_to_display, name, ivs, max_level):
     p, alts = find_pokemon_cli(gm, ko_base_map, name)
     if not p:
         print(f"'{name}' — 찾을 수 없음. 예: 마릴리, 메가 갸라도스, 그림자 뮤츠")
@@ -1203,7 +1203,9 @@ def analyze_cli(gm, ko_base_map, name, ivs, max_level):
 
     rows, best = analyze_pokemon(p, ivs, max_level)
     base = p["baseStats"]
-    print(f"\n=== {p['speciesName']} ({p['speciesId']}) ===")
+    sid = p["speciesId"]
+    disp = sid_to_display.get(sid, p.get("speciesName", sid))
+    print(f"\n=== {disp} ({sid}) ===")
     print(f"종족값: Atk {base['atk']} / Def {base['def']} / HP {base['hp']}")
     print(f"입력 개체값: {ivs[0]}/{ivs[1]}/{ivs[2]}\n")
 
@@ -1244,10 +1246,11 @@ def parse_ivs(s):
 def run_cli(args, gm):
     dex_to_ko = load_korean_dex_map()
     ko_base_map = build_ko_base_map(gm, dex_to_ko)
+    sid_to_display = {sid: disp for disp, sid in build_display_entries(gm, dex_to_ko)}
 
     if args.pokemon and len(args.ivs) == 3:
         ivs = parse_ivs(" ".join(args.ivs))
-        analyze_cli(gm, ko_base_map, args.pokemon, ivs, args.max_level)
+        analyze_cli(gm, ko_base_map, sid_to_display, args.pokemon, ivs, args.max_level)
         return
 
     print("Pokemon GO PvP 개체값 리그 랭커 (CLI)")
@@ -1261,7 +1264,7 @@ def run_cli(args, gm):
                 break
             iv_str = input("개체값 (예: 1 15 14): ").strip()
             ivs = parse_ivs(iv_str)
-            analyze_cli(gm, ko_base_map, name, ivs, args.max_level)
+            analyze_cli(gm, ko_base_map, sid_to_display, name, ivs, args.max_level)
             print()
         except (KeyboardInterrupt, EOFError):
             print("\n종료.")
