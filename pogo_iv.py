@@ -1375,12 +1375,25 @@ def run_gui(gm):
     def norm(s):
         return s.lower().replace(" ", "")
 
-    def filter_displays(query, only_favs=False):
+    def _category(sid):
+        if sid.endswith(("_mega", "_mega_x", "_mega_y")):
+            return "mega"
+        if sid.endswith("_shadow"):
+            return "shadow"
+        return "normal"
+
+    def filter_displays(query, only_favs=False,
+                        show_normal=True, show_shadow=True, show_mega=True):
         q = norm(query)
-        pool = (d for d in all_displays_full if display_to_sid[d] in favorites) \
-            if only_favs else all_displays_full
+        allowed = set()
+        if show_normal: allowed.add("normal")
+        if show_shadow: allowed.add("shadow")
+        if show_mega:   allowed.add("mega")
+        pool = [d for d in all_displays_full
+                if _category(display_to_sid[d]) in allowed
+                and (not only_favs or display_to_sid[d] in favorites)]
         if not q:
-            return list(pool)
+            return pool
         scored = []
         for d in pool:
             nd = norm(d)
@@ -1441,6 +1454,19 @@ def run_gui(gm):
     ttk.Checkbutton(left, textvariable=fav_count_var,
                     variable=fav_only_var,
                     command=lambda: trigger_search()).pack(anchor="w", pady=(0, 4))
+
+    # 분류 필터: 일반 / 그림자 / 메가
+    show_normal_var = tk.BooleanVar(value=settings.get("show_normal", True))
+    show_shadow_var = tk.BooleanVar(value=settings.get("show_shadow", True))
+    show_mega_var   = tk.BooleanVar(value=settings.get("show_mega",   True))
+    cat_row = ttk.Frame(left)
+    cat_row.pack(anchor="w", pady=(0, 4))
+    ttk.Label(cat_row, text="분류:", font=("", 9), foreground="#555").pack(side="left", padx=(0, 4))
+    for txt, var in (("일반", show_normal_var),
+                     ("그림자", show_shadow_var),
+                     ("메가", show_mega_var)):
+        ttk.Checkbutton(cat_row, text=txt, variable=var,
+                        command=lambda: trigger_search()).pack(side="left", padx=(0, 6))
 
     list_frame = ttk.Frame(left)
     list_frame.pack(fill="both", expand=True)
@@ -1897,21 +1923,29 @@ def run_gui(gm):
     # ===== Actions =====
     last_query = [""]
     last_fav_only = [None]
+    last_cat = [(None, None, None)]
 
     def update_listbox(force=False, auto_select=True):
         q = search_entry.get()
         fo = fav_only_var.get()
-        if not force and q == last_query[0] and fo == last_fav_only[0]:
+        cat = (show_normal_var.get(), show_shadow_var.get(), show_mega_var.get())
+        if not force and q == last_query[0] and fo == last_fav_only[0] and cat == last_cat[0]:
             return
         last_query[0] = q
         last_fav_only[0] = fo
-        filtered = filter_displays(q, only_favs=fo)
+        last_cat[0] = cat
+        filtered = filter_displays(q, only_favs=fo,
+                                   show_normal=cat[0],
+                                   show_shadow=cat[1],
+                                   show_mega=cat[2])
         listbox.delete(0, tk.END)
         for d in filtered:
             listbox.insert(tk.END, display_with_star(d))
         suffix = " (즐겨찾기)" if fo else ""
         if not filtered:
-            if fo and not favorites:
+            if not any(cat):
+                count_var.set("⚠ 분류 필터에서 일반/그림자/메가 중 하나는 켜야 함")
+            elif fo and not favorites:
                 count_var.set("⚠ 즐겨찾기 없음 — 포켓몬 선택 후 ☆ 버튼")
             elif q:
                 count_var.set(f"⚠ '{q}' 검색 결과 없음 — 다른 단어로 시도")
@@ -2719,6 +2753,9 @@ def run_gui(gm):
         try:
             settings["geometry"] = root.geometry()
             settings["fav_only"] = bool(fav_only_var.get())
+            settings["show_normal"] = bool(show_normal_var.get())
+            settings["show_shadow"] = bool(show_shadow_var.get())
+            settings["show_mega"]   = bool(show_mega_var.get())
             settings["league"] = league_var.get()
             save_settings(settings)
         except Exception:
