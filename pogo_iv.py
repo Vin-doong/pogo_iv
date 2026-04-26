@@ -1783,6 +1783,38 @@ def run_gui(gm):
         sid_to_display.setdefault(sid, disp)
     all_displays_full = sorted(display_to_sid.keys(), key=lambda s: s.lower())
 
+    def make_searchable_combo(parent, textvariable, values, on_select=None, **kwargs):
+        """검색 가능한 콤보박스 — 타이핑하면 dropdown 이 substring 매치로 필터링.
+        on_select: 선택 시 호출되는 콜백 (None 가능). 빈 텍스트면 전체 목록 복원.
+        값을 콤보 자체에 _all_values 로 캐싱.
+        """
+        kwargs.setdefault("state", "normal")
+        combo = ttk.Combobox(parent, textvariable=textvariable, **kwargs)
+        combo._all_values = list(values)
+        combo["values"] = combo._all_values
+
+        def _filter(_e=None):
+            typed = textvariable.get().strip().lower()
+            if not typed:
+                combo["values"] = combo._all_values
+                return
+            filtered = [v for v in combo._all_values if typed in v.lower()]
+            combo["values"] = filtered if filtered else combo._all_values
+
+        def _on_select(_e=None):
+            combo["values"] = combo._all_values  # 선택 후 dropdown 복원
+            if on_select:
+                on_select()
+
+        combo.bind("<KeyRelease>", _filter)
+        combo.bind("<<ComboboxSelected>>", _on_select)
+        return combo
+
+    def update_combo_values(combo, new_values):
+        """make_searchable_combo 가 만든 콤보의 캐시된 values 갱신."""
+        combo._all_values = list(new_values)
+        combo["values"] = combo._all_values
+
     # Preload league meta rankings (PvPoke overall)
     rankings = {}
     rankings_index = {}  # league_name → {sid: 1-based rank}
@@ -1972,8 +2004,18 @@ def run_gui(gm):
 
     ttk.Separator(league_row, orient="vertical").pack(side="left", fill="y", padx=10)
     ttk.Label(league_row, text="시즌 컵", font=("", 9)).pack(side="left", padx=(0, 4))
-    cup_combo = ttk.Combobox(league_row, textvariable=cup_combo_var,
-                             values=[CUP_PLACEHOLDER], state="readonly", width=24)
+
+    def _on_cup_select():
+        sel = cup_combo_var.get()
+        if sel and sel != CUP_PLACEHOLDER and sel in cup_label_to_name:
+            league_var.set(cup_label_to_name[sel])
+            try:
+                refresh()
+            except NameError:
+                pass
+    cup_combo = make_searchable_combo(league_row, cup_combo_var,
+                                      [CUP_PLACEHOLDER],
+                                      on_select=_on_cup_select, width=24)
     cup_combo.pack(side="left", padx=2)
 
     def _refresh_cup_choices():
@@ -1982,19 +2024,10 @@ def run_gui(gm):
         cup_leagues = [lg for lg in LEAGUES if lg.name not in builtin_names]
         cup_label_to_name.clear()
         cup_label_to_name.update({_league_label(lg): lg.name for lg in cup_leagues})
-        cup_combo["values"] = [CUP_PLACEHOLDER] + [_league_label(lg) for lg in cup_leagues]
+        update_combo_values(cup_combo,
+                            [CUP_PLACEHOLDER] + [_league_label(lg) for lg in cup_leagues])
 
     _refresh_cup_choices()
-
-    def _on_cup_select(_e=None):
-        sel = cup_combo_var.get()
-        if sel and sel != CUP_PLACEHOLDER and sel in cup_label_to_name:
-            league_var.set(cup_label_to_name[sel])
-            try:
-                refresh()
-            except NameError:
-                pass
-    cup_combo.bind("<<ComboboxSelected>>", _on_cup_select)
 
     # Tabs
     notebook = ttk.Notebook(right)
@@ -2400,16 +2433,17 @@ def run_gui(gm):
 
     ttk.Label(raid_top, text="보스", font=("", 10, "bold")).pack(side="left")
     boss_var = tk.StringVar()
-    boss_combo = ttk.Combobox(raid_top, textvariable=boss_var, width=36,
-                              state="readonly", height=20)
+    boss_combo = make_searchable_combo(raid_top, boss_var, [],
+                                       on_select=lambda: refresh_counters(),
+                                       width=36, height=20)
     boss_combo.pack(side="left", padx=(6, 16))
 
     ttk.Label(raid_top, text="날씨", font=("", 10, "bold")).pack(side="left")
     weather_var = tk.StringVar(value="(없음)")
     weather_choices = ["(없음)"] + [WEATHER_KO[w] for w in
                                      ["sunny","rainy","partly_cloudy","cloudy","windy","snow","fog"]]
-    weather_combo = ttk.Combobox(raid_top, textvariable=weather_var, values=weather_choices,
-                                 width=14, state="readonly")
+    weather_combo = make_searchable_combo(raid_top, weather_var, weather_choices,
+                                          on_select=lambda: refresh_counters(), width=14)
     weather_combo.pack(side="left", padx=(6, 16))
 
     ttk.Label(raid_top, text="모드", font=("", 10, "bold")).pack(side="left")
@@ -2492,7 +2526,7 @@ def run_gui(gm):
     def _populate_boss_combo():
         bosses = _boss_pool_sorted()
         labels = [_boss_label(b) for b in bosses]
-        boss_combo["values"] = labels
+        update_combo_values(boss_combo, labels)
         if labels and not boss_var.get():
             boss_var.set(labels[0])
 
@@ -2637,9 +2671,7 @@ def run_gui(gm):
         _populate_boss_combo()
         refresh_counters()
 
-    boss_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
-    weather_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
-    # 공격자 Lv 콤보 (raid_top 안에 있는 모든 콤보 중 boss/weather 외)
+    # 공격자 Lv 콤보 (boss/weather 는 make_searchable_combo 가 이미 on_select 바인딩)
     for w in raid_top.winfo_children():
         if isinstance(w, ttk.Combobox) and w not in (boss_combo, weather_combo):
             w.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
@@ -2658,20 +2690,21 @@ def run_gui(gm):
     ttk.Label(dps_top, text="  타겟 방어 타입:", font=("", 9)).pack(side="left", padx=(20, 4))
     dps_target_var = tk.StringVar(value="(중립)")
     target_choices = ["(중립)"] + [TYPE_KO[t] for t in TYPES_ORDER]
-    ttk.Combobox(dps_top, textvariable=dps_target_var, values=target_choices,
-                 width=10, state="readonly"
-                 ).pack(side="left")
+    make_searchable_combo(dps_top, dps_target_var, target_choices,
+                          on_select=lambda: refresh_pve_dps(),
+                          width=10).pack(side="left")
 
     ttk.Label(dps_top, text="  날씨:", font=("", 9)).pack(side="left", padx=(12, 4))
     dps_weather_var = tk.StringVar(value="(없음)")
-    ttk.Combobox(dps_top, textvariable=dps_weather_var, values=weather_choices,
-                 width=12, state="readonly").pack(side="left")
+    make_searchable_combo(dps_top, dps_weather_var, weather_choices,
+                          on_select=lambda: refresh_pve_dps(),
+                          width=12).pack(side="left")
 
     ttk.Label(dps_top, text="  Lv:", font=("", 9)).pack(side="left", padx=(12, 4))
     dps_lv_var = tk.StringVar(value="50")
-    ttk.Combobox(dps_top, textvariable=dps_lv_var,
-                 values=["40", "45", "50", "51"], width=5, state="readonly"
-                 ).pack(side="left")
+    dps_lv_combo = ttk.Combobox(dps_top, textvariable=dps_lv_var,
+                                values=["40", "45", "50", "51"], width=5, state="readonly")
+    dps_lv_combo.pack(side="left")
 
     dps_status_var = tk.StringVar(
         value="• 좌측 포켓몬 선택 시 자동 갱신 · Lv50/15·15·15 가정")
@@ -2792,9 +2825,8 @@ def run_gui(gm):
         )
 
     ttk.Combobox  # (placeholder for next bind block)
-    for w in dps_top.winfo_children():
-        if isinstance(w, ttk.Combobox):
-            w.bind("<<ComboboxSelected>>", lambda e: refresh_pve_dps())
+    # dps_target / dps_weather 콤보는 make_searchable_combo 가 이미 바인딩
+    dps_lv_combo.bind("<<ComboboxSelected>>", lambda e: refresh_pve_dps())
 
     # --- Tab 8: PvE 다이맥스 도감 ---
     dmax_tab = ttk.Frame(notebook, padding=(8, 8))
@@ -2963,14 +2995,24 @@ def run_gui(gm):
               font=("", 9), foreground="#555", justify="left"
               ).pack(anchor="w", pady=(0, 8))
 
-    # 대사 입력 (선택 시 타입 자동 추정)
+    # 대사 입력 (선택 시 타입 자동 추정) — 검색 가능 콤보로
     rkt_phrase_row = ttk.Frame(rkt_tab)
     rkt_phrase_row.pack(fill="x", pady=(0, 6))
     ttk.Label(rkt_phrase_row, text="조무래기 대사", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
     rkt_phrase_var = tk.StringVar(value="")
-    rkt_phrase_entry = ttk.Entry(rkt_phrase_row, textvariable=rkt_phrase_var, width=40)
+    # 캐논 대사 목록 — 동일 대표 대사 dedupe
+    _phrase_options = []
+    _seen_reps = set()
+    for kw, code, rep in GRUNT_PHRASES:
+        if rep not in _seen_reps:
+            _phrase_options.append(rep)
+            _seen_reps.add(rep)
+    rkt_phrase_entry = make_searchable_combo(
+        rkt_phrase_row, rkt_phrase_var, _phrase_options,
+        on_select=lambda: _apply_phrase(),  # 대사 선택 시 타입 추정
+        width=44)
     rkt_phrase_entry.pack(side="left", padx=(0, 8))
-    rkt_phrase_result = tk.StringVar(value="(예: \"이 바다는 위험해!\" → 물 타입)")
+    rkt_phrase_result = tk.StringVar(value="(드롭다운에서 선택 또는 키워드 입력: '바다', '짜릿' 등)")
     ttk.Label(rkt_phrase_row, textvariable=rkt_phrase_result,
               font=("", 9), foreground="#666").pack(side="left")
 
@@ -2978,9 +3020,9 @@ def run_gui(gm):
     rkt_top.pack(fill="x", pady=(0, 6))
     ttk.Label(rkt_top, text="조무래기 타입", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
     rkt_type_var = tk.StringVar(value=TYPE_KO["fire"])
-    rkt_type_combo = ttk.Combobox(rkt_top, textvariable=rkt_type_var,
-                                  values=[TYPE_KO[t] for t in TYPES_ORDER],
-                                  width=8, state="readonly")
+    rkt_type_combo = make_searchable_combo(
+        rkt_top, rkt_type_var, [TYPE_KO[t] for t in TYPES_ORDER],
+        on_select=lambda: refresh_rocket(), width=8)
     rkt_type_combo.pack(side="left", padx=(0, 20))
 
     ttk.Label(rkt_top, text="공격자 Lv", font=("", 10, "bold")).pack(side="left", padx=(0, 4))
@@ -3069,7 +3111,7 @@ def run_gui(gm):
             f"Lv{rkt_lv_var.get()}/15·15·15 가정 · 그림자/메가 적은 그대로 사용 가능"
         )
 
-    rkt_type_combo.bind("<<ComboboxSelected>>", lambda e: refresh_rocket())
+    # rkt_type_combo 는 make_searchable_combo 가 이미 바인딩
     rkt_lv_combo.bind("<<ComboboxSelected>>", lambda e: refresh_rocket())
 
     rkt_phrase_pending = [None]
