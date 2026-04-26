@@ -675,45 +675,47 @@ WEATHER_KO = {
     "none": "(없음)",
 }
 
-# 다이맥스 가능 종 풀 (PoGO Max Battle 출시 종, 2026-04 기준 손큐레이션)
-# (PvPoke speciesId, has_gmax_form). PokeMiners GAME_MASTER 의
-# allowed_sourdough_pokemon 기반. 신규 출시되면 여기에 추가.
+# Pokemon GO 맥스 배틀 / 파워스폿 사용 가능 종 (2026-04 기준)
+# PokeMiners GAME_MASTER 의 BREAD_POKEMON_SCALING_SETTINGS (실제 배포된 풀) 기반.
+# (PvPoke speciesId, has_gmax_form). 진화 전 단계는 1성 맥스, 최종진화는 3-6성 맥스 보스.
 DYNAMAX_POOL = [
-    # Gen1 — 첫 다이맥스 출시 (2024.09)
-    ("venusaur",     True),
-    ("charizard",    True),
-    ("blastoise",    True),
-    ("butterfree",   True),
-    ("pikachu",      True),
-    ("meowth",       True),
-    ("machamp",      True),
-    ("gengar",       True),
-    ("kingler",      True),
-    ("lapras",       True),
-    ("eevee",        False),
-    ("snorlax",      True),
-    # Gen5
-    ("excadrill",    False),
-    ("garbodor",     True),
-    # Gen7
-    ("melmetal",     True),
-    # Gen8 — 갈라르 다이맥스 종
-    ("greedent",     False),
-    ("corviknight",  True),
-    ("orbeetle",     True),
-    ("drednaw",      True),
-    ("coalossal",    True),
-    ("flapple",      True),
-    ("appletun",     True),
-    ("sandaconda",   True),
-    ("toxtricity",   True),
-    ("centiskorch",  True),
-    ("hatterene",    True),
-    ("grimmsnarl",   True),
-    ("alcremie",     True),
-    ("copperajah",   True),
-    ("duraludon",    True),
-    ("dragapult",    False),
+    # ── Gen 1 ─────────────────────────────────────────────────────────
+    ("bulbasaur",   False), ("ivysaur",     False), ("venusaur",    True),
+    ("charmander",  False), ("charmeleon",  False), ("charizard",   True),
+    ("squirtle",    False), ("wartortle",   False), ("blastoise",   True),
+    ("caterpie",    False), ("metapod",     False), ("butterfree",  True),
+    ("krabby",      False), ("kingler",     True),
+    ("machop",      False), ("machoke",     False), ("machamp",     True),
+    ("gastly",      False), ("haunter",     False), ("gengar",      True),
+    ("chansey",     False),
+    ("lapras",      True),
+    ("snorlax",     True),
+    # 1세대 전설 새
+    ("articuno",    False), ("zapdos",      False), ("moltres",     False),
+    # ── Gen 2 — 전설 비스트 ──────────────────────────────────────────
+    ("raikou",      False), ("entei",       False), ("suicune",     False),
+    # ── Gen 3 — 메탕 라인 ────────────────────────────────────────────
+    ("beldum",      False), ("metang",      False), ("metagross",   False),
+    # ── Gen 5 ─────────────────────────────────────────────────────────
+    ("pidove",      False), ("tranquill",   False), ("unfezant",    False),
+    ("drilbur",     False), ("excadrill",   False),
+    ("darumaka",    False), ("darmanitan_standard", False),
+    ("cryogonal",   False),
+    # ── Gen 7 ─────────────────────────────────────────────────────────
+    ("passimian",   False),
+    # ── Gen 8 (갈라르) ───────────────────────────────────────────────
+    ("skwovet",     False), ("greedent",    False),
+    ("wooloo",      False), ("dubwool",     False),
+    ("grookey",     False), ("thwackey",    False), ("rillaboom",   True),
+    ("scorbunny",   False), ("raboot",      False), ("cinderace",   True),
+    ("sobble",      False), ("drizzile",    False), ("inteleon",    True),
+    ("toxel",       False), ("toxtricity",  True),
+    ("falinks",     False),
+    ("kubfu",       False),
+    ("urshifu_single_strike", True),  # 일격
+    ("urshifu_rapid_strike",  True),  # 연격
+    # ── Special ──────────────────────────────────────────────────────
+    ("eternatus_eternamax", False),  # 6성 전용 보스
 ]
 
 # 18 타입 → Max Move 한글명 (Sword/Shield 한국어판 기준)
@@ -2368,6 +2370,12 @@ def run_gui(gm):
                     value="max", command=lambda: refresh_counters()
                     ).pack(side="left", padx=(0, 16))
 
+    ttk.Label(raid_top, text="공격자 Lv", font=("", 10, "bold")).pack(side="left", padx=(0, 4))
+    raid_lv_var = tk.StringVar(value="50")
+    ttk.Combobox(raid_top, textvariable=raid_lv_var,
+                 values=["40", "45", "50", "51"], width=5, state="readonly"
+                 ).pack(side="left", padx=(0, 16))
+
     use_selected_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(raid_top, text="좌측 선택 포켓몬을 보스로",
                     variable=use_selected_var,
@@ -2501,6 +2509,10 @@ def run_gui(gm):
         # 일시적으로 부풀리는 대신, top_counters 안의 cpm 분기 로직을 우회하기 위해
         # 보스 sid 에 _mega 가 없어도 강제 max cpm 을 쓰도록 처리.
         is_max_mode = (boss_mode_var.get() == "max")
+        try:
+            atk_lv = float(raid_lv_var.get())
+        except ValueError:
+            atk_lv = 50.0
         cnt = top_counters(
             boss_p, state["gm"], moves_by_id, n=20,
             weather=weather,
@@ -2509,6 +2521,7 @@ def run_gui(gm):
             include_legendary=inc_legend_var.get(),
             favorites_only=favs,
             force_boss_cpm=(1.0 if is_max_mode else None),
+            attacker_level=atk_lv,
         )
         for i, c in enumerate(cnt, 1):
             disp = sid_to_display.get(c["sid"], c["sid"])
@@ -2535,7 +2548,7 @@ def run_gui(gm):
         else:
             raid_status_var.set(
                 f"• {len(cnt)}마리 표시 · 모드={'맥스 배틀' if is_max_mode else '일반 레이드'} · "
-                f"날씨={weather_var.get()} · Lv50/15·15·15 가정"
+                f"날씨={weather_var.get()} · Lv{raid_lv_var.get()}/15·15·15 가정"
             )
             # 6마리 라인업 클리어 시간 추정
             # 보스 HP: 일반 레이드 5성≈15000, 맥스≈100000 (대략)
@@ -2575,6 +2588,10 @@ def run_gui(gm):
 
     boss_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
     weather_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
+    # 공격자 Lv 콤보 (raid_top 안에 있는 모든 콤보 중 boss/weather 외)
+    for w in raid_top.winfo_children():
+        if isinstance(w, ttk.Combobox) and w not in (boss_combo, weather_combo):
+            w.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
     _populate_boss_combo()
 
     # --- Tab 7: PvE DPS — 선택 포켓몬의 모든 무브셋 DPS 정렬 ---
@@ -2598,6 +2615,12 @@ def run_gui(gm):
     dps_weather_var = tk.StringVar(value="(없음)")
     ttk.Combobox(dps_top, textvariable=dps_weather_var, values=weather_choices,
                  width=12, state="readonly").pack(side="left")
+
+    ttk.Label(dps_top, text="  Lv:", font=("", 9)).pack(side="left", padx=(12, 4))
+    dps_lv_var = tk.StringVar(value="50")
+    ttk.Combobox(dps_top, textvariable=dps_lv_var,
+                 values=["40", "45", "50", "51"], width=5, state="readonly"
+                 ).pack(side="left")
 
     dps_status_var = tk.StringVar(
         value="• 좌측 포켓몬 선택 시 자동 갱신 · Lv50/15·15·15 가정")
@@ -2681,10 +2704,14 @@ def run_gui(gm):
                 c = moves_by_id.get(cid)
                 if not c or c.get("energy", 0) <= 0:
                     continue
-                # 보스 가정: 5성급 보스 (cpm 0.79, base def 180)
+                try:
+                    lv = float(dps_lv_var.get())
+                except ValueError:
+                    lv = 50.0
+                # 보스 가정: 5성급 보스 (cpm 0.5793, base def 180)
                 r = attacker_dps_vs(atk, f, c, target_types,
-                                    boss_cpm=0.79, boss_base_def=180,
-                                    weather=weather, attacker_level=50)
+                                    boss_cpm=0.5793, boss_base_def=180,
+                                    weather=weather, attacker_level=lv)
                 rows.append({**r, "fid": fid, "cid": cid})
         rows.sort(key=lambda x: x["edps"], reverse=True)
 
@@ -2710,7 +2737,7 @@ def run_gui(gm):
             ))
         dps_status_var.set(
             f"• {len(rows)}개 무브셋 · 타겟={target_str} · 날씨={dps_weather_var.get()} · "
-            f"Lv50/15·15·15 가정 · ★ = 엘리트/레거시 무브"
+            f"Lv{dps_lv_var.get()}/15·15·15 가정 · ★ = 엘리트/레거시 무브"
         )
 
     ttk.Combobox  # (placeholder for next bind block)
