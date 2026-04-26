@@ -2811,14 +2811,14 @@ def run_gui(gm):
     dmax_table_frame.pack(fill="both", expand=True)
     dmax_scroll = ttk.Scrollbar(dmax_table_frame, orient="vertical")
     dmax_scroll.pack(side="right", fill="y")
-    dmax_cols = ("name", "types", "gmax", "atk", "def", "hp", "best_max")
-    dmax_labels = ["포켓몬", "타입", "G", "공", "방", "체", "최적 맥스 무브"]
-    dmax_widths = [180, 130, 30, 50, 50, 50, 200]
+    dmax_cols = ("name", "types", "gmax", "atk", "def", "hp", "weak", "best_max")
+    dmax_labels = ["포켓몬", "타입", "G", "공", "방", "체", "주요 약점", "최적 맥스 무브"]
+    dmax_widths = [150, 110, 30, 50, 50, 50, 200, 160]
     dmax_tree = ttk.Treeview(dmax_table_frame, columns=dmax_cols, show="headings",
-                             yscrollcommand=dmax_scroll.set, height=22)
+                             yscrollcommand=dmax_scroll.set, height=14)
     for c, l, w in zip(dmax_cols, dmax_labels, dmax_widths):
         dmax_tree.heading(c, text=l)
-        dmax_tree.column(c, width=w, anchor="w" if c in ("name", "best_max") else "center")
+        dmax_tree.column(c, width=w, anchor="w" if c in ("name", "best_max", "weak") else "center")
     dmax_tree.pack(side="left", fill="both", expand=True)
     dmax_scroll.config(command=dmax_tree.yview)
 
@@ -2826,7 +2826,31 @@ def run_gui(gm):
     ttk.Label(dmax_tab, textvariable=dmax_status_var,
               font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
 
-    dmax_sid_by_iid = {}  # tree iid → sid (행 더블클릭 시 카운터 탭으로 점프)
+    # 하단 상세 패널 — 선택된 종의 카운터 TOP 6 표시
+    dmax_detail_frame = ttk.LabelFrame(dmax_tab, text=" 선택 종 카운터 TOP 6 ",
+                                       padding=(6, 4))
+    dmax_detail_frame.pack(fill="x", pady=(8, 0))
+    dmax_detail_var = tk.StringVar(
+        value="↑ 위 표에서 한 종을 선택하면 카운터 TOP 6 가 여기 표시됩니다  ·  "
+              "더블클릭 시 PvE 카운터 탭으로 전체 분석"
+    )
+    ttk.Label(dmax_detail_frame, textvariable=dmax_detail_var,
+              font=("", 9), foreground="#444", justify="left", wraplength=1100
+              ).pack(anchor="w")
+
+    dmax_sid_by_iid = {}  # tree iid → sid
+
+    def _weakness_str(types):
+        """타입 리스트 → '전기(2.6×) 격투(1.6×) 비행(1.6×)' 형태 약점 문자열."""
+        ww = {}
+        for atk in TYPES_ORDER:
+            mult = 1.0
+            for d in types:
+                mult *= TYPE_CHART.get(atk, {}).get(d, 1.0)
+            if mult > 1.05:
+                ww[atk] = mult
+        sorted_w = sorted(ww.items(), key=lambda x: -x[1])
+        return " ".join(f"{TYPE_KO[t]}({m:.2f}×)" for t, m in sorted_w[:4])
 
     def refresh_dynamax():
         for r in dmax_tree.get_children():
@@ -2843,18 +2867,65 @@ def run_gui(gm):
             bs = p.get("baseStats", {})
             best_max = "맥스가드 / 맥스스피릿" if not types else \
                        f"맥스{MAX_MOVE_KO.get(types[0], '?')}"
+            weak_str = _weakness_str(types) if types else "—"
             iid = dmax_tree.insert("", "end", values=(
                 disp, type_str, "★" if gmax else "",
                 bs.get("atk", "—"), bs.get("def", "—"), bs.get("hp", "—"),
+                weak_str,
                 best_max,
             ))
             dmax_sid_by_iid[iid] = sid
             cnt += 1
         dmax_status_var.set(
-            f"• 총 {cnt}/{len(DYNAMAX_POOL)} 종 표시 · ★ = 거다이맥스(GMax) 폼 존재 · "
-            "데이터: PokeMiners GAME_MASTER 기반 큐레이션 · "
-            "행 더블클릭 → PvE 카운터 탭으로 이 종을 보스로 분석"
+            f"• 총 {cnt}/{len(DYNAMAX_POOL)} 종 · ★=거다이맥스(GMax) · "
+            "데이터: PokeMiners 기반 큐레이션 · "
+            "행 클릭 → 카운터 미리보기 / 더블클릭 → PvE 카운터 탭"
         )
+        dmax_detail_var.set(
+            "↑ 위 표에서 한 종을 선택하면 카운터 TOP 6 가 여기 표시됩니다  ·  "
+            "더블클릭 시 PvE 카운터 탭으로 전체 분석"
+        )
+
+    def _on_dmax_select(_e=None):
+        sel = dmax_tree.selection()
+        if not sel:
+            return
+        sid = dmax_sid_by_iid.get(sel[0])
+        if not sid:
+            return
+        p = next((x for x in state["gm"]["pokemon"] if x.get("speciesId") == sid), None)
+        if not p:
+            return
+        disp = sid_to_display.get(sid, sid)
+        # 카운터 계산 (맥스 배틀 가정 — boss cpm 1.0, 더 단단한 보스)
+        dmax_detail_var.set(f"⏳ {disp} 카운터 계산 중...")
+        dmax_detail_frame.update_idletasks()
+        try:
+            cnt = top_counters(
+                p, state["gm"], moves_by_id, n=6,
+                weather=None,
+                include_shadow=True, include_mega=True, include_legendary=True,
+                force_boss_cpm=1.0,  # 맥스 배틀 보스 가정
+                attacker_level=50.0,
+            )
+        except Exception as e:
+            dmax_detail_var.set(f"⚠ 계산 실패: {e}")
+            return
+        if not cnt:
+            dmax_detail_var.set(f"{disp}: 카운터 계산 결과 없음")
+            return
+        def _move_ko(mid):
+            k = mid.lower().replace("_", "-")
+            return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
+        lines = [f"▶ {disp} (맥스 배틀 보스 가정) 카운터 TOP 6:"]
+        for i, c in enumerate(cnt, 1):
+            cd = sid_to_display.get(c["sid"], c["sid"])
+            f_ko = _move_ko(c["fast_id"])
+            ch_ko = _move_ko(c["charged_id"])
+            lines.append(f"  {i}. {cd}  —  {f_ko} + {ch_ko}  (eDPS {c['edps']:.1f})")
+        dmax_detail_var.set("\n".join(lines))
+
+    dmax_tree.bind("<<TreeviewSelect>>", _on_dmax_select)
 
     def _on_dmax_double(_e=None):
         sel = dmax_tree.selection()
