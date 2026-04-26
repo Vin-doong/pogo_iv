@@ -3061,45 +3061,12 @@ def run_gui(gm):
     ttk.Label(rkt_tab, textvariable=rkt_status_var,
               font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
 
-    # ─── 간부/지오반니 분석 도우미 ─────────────────────────────────────────
-    leader_frame = ttk.LabelFrame(rkt_tab, text=" 간부 (클리프/아르로/시에라) / 보스 지오반니 분석 ",
-                                  padding=(8, 6))
-    leader_frame.pack(fill="x", pady=(10, 0))
-
-    ttk.Label(leader_frame,
-              text="간부와 보스는 라인업이 1~3개월마다 바뀌므로 별도 표 안 만들었어요.\n"
-                   "사용법: ① 좌측 검색에서 상대방 포켓몬을 찾아 선택 (예: 그림자 헌치크로우)\n"
-                   "      ② 아래 [선택한 포켓몬을 보스로 분석] 버튼 클릭 → PvE 카운터 탭으로 점프\n"
-                   "      ③ 카운터 TOP 20 + 무브셋 + 클리어 시간 추정 표시",
-              font=("", 9), foreground="#444", justify="left"
-              ).pack(anchor="w", pady=(0, 6))
-
-    leader_sel_var = tk.StringVar(value="좌측에서 포켓몬 미선택")
-    leader_status_row = ttk.Frame(leader_frame)
-    leader_status_row.pack(fill="x")
-    ttk.Label(leader_status_row, text="현재 좌측 선택:",
-              font=("", 9), foreground="#555").pack(side="left", padx=(0, 6))
-    ttk.Label(leader_status_row, textvariable=leader_sel_var,
-              font=("", 10, "bold"), foreground="#205080").pack(side="left", padx=(0, 12))
-
-    def _refresh_leader_label():
-        sel = listbox.curselection()
-        if not sel:
-            leader_sel_var.set("(좌측 리스트에서 포켓몬을 먼저 선택)")
-            return
-        leader_sel_var.set(strip_star(listbox.get(sel[0])))
-
-    def _analyze_as_boss():
-        sel = listbox.curselection()
-        if not sel:
-            messagebox.showinfo("선택 필요", "좌측 리스트에서 분석할 포켓몬을 먼저 선택하세요.")
-            return
-        use_selected_var.set(True)
-        notebook.select(raid_tab)
-        refresh_counters()
-
-    ttk.Button(leader_status_row, text="선택한 포켓몬을 보스로 분석 →",
-               command=_analyze_as_boss).pack(side="left", padx=(0, 6))
+    ttk.Label(rkt_tab,
+              text="※ 간부(클리프/아르로/시에라)/보스 지오반니 라인업은 로테이션이 짧아 별도 표 없음. "
+                   "특정 포켓몬에 대한 카운터가 필요하면 PvE 카운터 탭에서 좌측 포켓몬 선택 후 "
+                   "「좌측 선택 포켓몬을 보스로」 체크하세요.",
+              font=("", 8), foreground="#888", wraplength=900, justify="left"
+              ).pack(anchor="w", pady=(8, 0))
 
     def _rkt_type_code():
         v = rkt_type_var.get()
@@ -3952,8 +3919,6 @@ def run_gui(gm):
                 refresh_pve_dps()
             elif tab == "PvE 카운터" and use_selected_var.get():
                 refresh_counters()
-            elif tab == "PvE 로켓":
-                _refresh_leader_label()
         except Exception:
             pass
     listbox.bind("<<ListboxSelect>>", _on_listbox_select)
@@ -4012,7 +3977,6 @@ def run_gui(gm):
                 refresh_dynamax()
             elif tab == "PvE 로켓":
                 refresh_rocket()
-                _refresh_leader_label()
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
