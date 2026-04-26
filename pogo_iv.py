@@ -718,7 +718,7 @@ DYNAMAX_POOL = [
     ("eternatus_eternamax", False),  # 6성 전용 보스
 ]
 
-# 로켓단 그런트 배틀 전 대사 → 타입 매핑 (한국 PoGO 공식 대사)
+# 로켓단 조무래기 배틀 전 대사 → 타입 매핑 (한국 PoGO 공식 대사)
 # 출처: namu.wiki / poketory.com 교차 검증
 # 키워드 substring 매치로 타입 추정 (구두점/띄어쓰기 무관). 매칭 우선순위는 정의 순서.
 # 각 타입마다 (1) 핵심 어구 + (2) 짧은 단일 단어 키워드를 추가해 약식 입력도 매칭되게 함.
@@ -749,14 +749,14 @@ GRUNT_PHRASES = [
     ("귀여운",          "fairy",    "내 귀여운 포켓몬 어때!"),
 ]
 
-# 특수(decoy) 그런트 — 단일 타입으로 매핑 안 됨, 멀티 타입 팀 (잠만보 등)
+# 특수(decoy) 조무래기 — 단일 타입으로 매핑 안 됨, 멀티 타입 팀 (잠만보 등)
 GRUNT_PHRASES_SPECIAL = [
     "어디 이겨볼까", "각오해", "승자만이 승리", "이미 이겼어",
 ]
 
 
 def find_grunt_type(phrase):
-    """그런트 대사 → ('type_code', '대표 대사') 또는 ('special', None) 또는 (None, None)."""
+    """조무래기 대사 → ('type_code', '대표 대사') 또는 ('special', None) 또는 (None, None)."""
     if not phrase:
         return (None, None)
     norm = phrase.strip().lower().replace(" ", "")
@@ -2880,14 +2880,14 @@ def run_gui(gm):
     dmax_tree.bind("<Double-Button-1>", _on_dmax_double)
     dmax_tree.bind("<Return>", _on_dmax_double)
 
-    # --- Tab 9: PvE 로켓 — 로켓단 그런트 카운터 ---
+    # --- Tab 9: PvE 로켓 — 로켓단 조무래기 카운터 ---
     rkt_tab = ttk.Frame(notebook, padding=(8, 8))
     notebook.add(rkt_tab, text="  PvE 로켓  ")
 
     ttk.Label(rkt_tab,
-              text="로켓단 그런트 카운터 — 그런트는 항상 한 가지 타입 테마로 팀을 구성합니다.\n"
+              text="로켓단 조무래기 카운터 — 조무래기는 항상 한 가지 타입 테마로 팀을 구성합니다.\n"
                    "배틀 전 대사를 입력하거나 직접 타입을 선택하세요. 카운터 TOP 20 자동 표시.\n"
-                   "리더(클리프/아르로/시에라)/지오반니는 로테이션 주기가 짧으므로 별도 표 대신,\n"
+                   "간부(클리프/아르로/시에라)/보스 지오반니는 로테이션 주기가 짧으므로 별도 표 대신,\n"
                    "PvE 카운터 탭의 \"좌측 선택 포켓몬을 보스로\" 모드를 활용하세요.",
               font=("", 9), foreground="#555", justify="left"
               ).pack(anchor="w", pady=(0, 8))
@@ -2895,7 +2895,7 @@ def run_gui(gm):
     # 대사 입력 (선택 시 타입 자동 추정)
     rkt_phrase_row = ttk.Frame(rkt_tab)
     rkt_phrase_row.pack(fill="x", pady=(0, 6))
-    ttk.Label(rkt_phrase_row, text="그런트 대사", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
+    ttk.Label(rkt_phrase_row, text="조무래기 대사", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
     rkt_phrase_var = tk.StringVar(value="")
     rkt_phrase_entry = ttk.Entry(rkt_phrase_row, textvariable=rkt_phrase_var, width=40)
     rkt_phrase_entry.pack(side="left", padx=(0, 8))
@@ -2905,7 +2905,7 @@ def run_gui(gm):
 
     rkt_top = ttk.Frame(rkt_tab)
     rkt_top.pack(fill="x", pady=(0, 6))
-    ttk.Label(rkt_top, text="그런트 타입", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
+    ttk.Label(rkt_top, text="조무래기 타입", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
     rkt_type_var = tk.StringVar(value=TYPE_KO["fire"])
     rkt_type_combo = ttk.Combobox(rkt_top, textvariable=rkt_type_var,
                                   values=[TYPE_KO[t] for t in TYPES_ORDER],
@@ -2945,7 +2945,7 @@ def run_gui(gm):
     rkt_scroll.config(command=rkt_tree.yview)
 
     rkt_status_var = tk.StringVar(
-        value="• 그런트 보스 능력치는 평균값 가정 (atk=200/def=180) · "
+        value="• 조무래기 보스 능력치는 평균값 가정 (atk=200/def=180) · "
               "그림자 적은 1.2× 공격 적용 (실제와 동일)")
     ttk.Label(rkt_tab, textvariable=rkt_status_var,
               font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
@@ -2961,7 +2961,7 @@ def run_gui(gm):
         for r in rkt_tree.get_children():
             rkt_tree.delete(r)
         target = _rkt_type_code()
-        # 가상 보스: 그런트 평균 능치 + 선택 타입 단일
+        # 가상 보스: 조무래기 평균 능치 + 선택 타입 단일
         # 그림자 1.2x 공격은 어차피 이 보스의 def 만 영향 — counter 우선순위는 동일
         synthetic_boss = {
             "speciesId": f"_grunt_{target}",
@@ -2994,7 +2994,7 @@ def run_gui(gm):
                 f"{c['edps']:.1f}", f"{c['dps']:.1f}",
             ))
         rkt_status_var.set(
-            f"• {len(cnt)}마리 표시 · 그런트 타입={rkt_type_var.get()} · "
+            f"• {len(cnt)}마리 표시 · 조무래기 타입={rkt_type_var.get()} · "
             f"Lv{rkt_lv_var.get()}/15·15·15 가정 · 그림자/메가 적은 그대로 사용 가능"
         )
 
@@ -3009,7 +3009,7 @@ def run_gui(gm):
             return
         code, rep = find_grunt_type(phrase)
         if code == "special":
-            rkt_phrase_result.set("⚠ 특수 그런트 (멀티 타입, 잠만보 등) — 타입 추정 불가")
+            rkt_phrase_result.set("⚠ 특수 조무래기 (멀티 타입, 잠만보 등) — 타입 추정 불가")
             return
         if not code:
             rkt_phrase_result.set("⚠ 매칭 안 됨 — 대사 일부 키워드만 입력해도 됨 (예: '바다', '얼려', '짜릿')")
