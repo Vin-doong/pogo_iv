@@ -630,6 +630,60 @@ WEATHER_KO = {
     "none": "(없음)",
 }
 
+# 다이맥스 가능 종 풀 (PoGO Max Battle 출시 종, 2026-04 기준 손큐레이션)
+# (PvPoke speciesId, has_gmax_form). PokeMiners GAME_MASTER 의
+# allowed_sourdough_pokemon 기반. 신규 출시되면 여기에 추가.
+DYNAMAX_POOL = [
+    # Gen1 — 첫 다이맥스 출시 (2024.09)
+    ("venusaur",     True),
+    ("charizard",    True),
+    ("blastoise",    True),
+    ("butterfree",   True),
+    ("pikachu",      True),
+    ("meowth",       True),
+    ("machamp",      True),
+    ("gengar",       True),
+    ("kingler",      True),
+    ("lapras",       True),
+    ("eevee",        False),
+    ("snorlax",      True),
+    # Gen5
+    ("excadrill",    False),
+    ("garbodor",     True),
+    # Gen7
+    ("melmetal",     True),
+    # Gen8 — 갈라르 다이맥스 종
+    ("greedent",     False),
+    ("corviknight",  True),
+    ("orbeetle",     True),
+    ("drednaw",      True),
+    ("coalossal",    True),
+    ("flapple",      True),
+    ("appletun",     True),
+    ("sandaconda",   True),
+    ("toxtricity",   True),
+    ("centiskorch",  True),
+    ("hatterene",    True),
+    ("grimmsnarl",   True),
+    ("alcremie",     True),
+    ("copperajah",   True),
+    ("duraludon",    True),
+    ("dragapult",    False),
+]
+
+# 18 타입 → Max Move 한글명 (Sword/Shield 한국어판 기준)
+MAX_MOVE_KO = {
+    "normal":   "러시",     "fire":     "플레어",
+    "water":    "워터",     "electric": "선더",
+    "grass":    "플랜츠",   "ice":      "블리자드",
+    "fighting": "너클",     "poison":   "포이즌",
+    "ground":   "어스",     "flying":   "에어",
+    "psychic":  "마인드",   "bug":      "버그",
+    "rock":     "록",       "ghost":    "고스트",
+    "dragon":   "드래곤",   "dark":     "다크",
+    "steel":    "스틸",     "fairy":    "페어리",
+}
+
 # ScrapedDuck 의 보스 이름 → PvPoke speciesId 변환 규칙
 _BOSS_NAME_PREFIXES = [
     ("Mega ",     "_mega"),
@@ -1786,7 +1840,7 @@ def run_gui(gm):
 
     # --- Tab 1: 선택 포켓몬 베스트 개체값 ---
     iv_tab = ttk.Frame(notebook, padding=(6, 8))
-    notebook.add(iv_tab, text="  선택 포켓몬 · 베스트 개체값  ")
+    notebook.add(iv_tab, text="  PvP 분석  ")
 
     # 헤더: 스프라이트(좌) + 정보·진화 스택(우)
     header_frame = ttk.Frame(iv_tab)
@@ -1941,7 +1995,7 @@ def run_gui(gm):
 
     # --- Tab 2: 리그 메타 랭킹 ---
     meta_tab = ttk.Frame(notebook, padding=(6, 8))
-    notebook.add(meta_tab, text="  리그 메타 랭킹  ")
+    notebook.add(meta_tab, text="  PvP 메타  ")
 
     meta_label = tk.StringVar(value="")
     ttk.Label(meta_tab, textvariable=meta_label, font=("", 10)).pack(anchor="w", pady=(0, 4))
@@ -1978,7 +2032,7 @@ def run_gui(gm):
 
     # --- Tab 3: 내 IV로 포켓몬 찾기 (역검색) ---
     rev_tab = ttk.Frame(notebook, padding=(6, 8))
-    notebook.add(rev_tab, text="  IV로 포켓몬 찾기  ")
+    notebook.add(rev_tab, text="  PvP IV검색  ")
 
     rev_top = ttk.Frame(rev_tab)
     rev_top.pack(fill="x", pady=(0, 8))
@@ -2035,7 +2089,7 @@ def run_gui(gm):
 
     # --- Tab 4: CP → IV 추정 ---
     cp_tab = ttk.Frame(notebook, padding=(6, 8))
-    notebook.add(cp_tab, text="  CP → IV 추정  ")
+    notebook.add(cp_tab, text="  PvP CP→IV  ")
 
     ttk.Label(cp_tab,
               text="좌측에서 포켓몬 선택 후, 게임에서 보이는 CP/HP/(레벨)을 입력 → 가능한 IV 후보",
@@ -2077,7 +2131,7 @@ def run_gui(gm):
 
     # --- Tab 5: 타입 상성표 ---
     type_tab = ttk.Frame(notebook, padding=(8, 8))
-    notebook.add(type_tab, text="  타입 상성표  ")
+    notebook.add(type_tab, text="  타입 상성  ")
 
     ttk.Label(type_tab,
               text="↓ 공격 타입  ·  → 방어 타입  (PoGO PvP 데미지 배율)",
@@ -2139,7 +2193,7 @@ def run_gui(gm):
 
     # --- Tab 6: 레이드 카운터 (PvE) ---
     raid_tab = ttk.Frame(notebook, padding=(8, 8))
-    notebook.add(raid_tab, text="  레이드 카운터  ")
+    notebook.add(raid_tab, text="  PvE 카운터  ")
 
     raid_state = {"bosses": [], "current_boss": None, "current_weather": None}
     try:
@@ -2163,7 +2217,11 @@ def run_gui(gm):
             badge = "[엘리트]"
         else:
             badge = f"[{tier}]"
-        return f"{badge} {b.get('name','?')}"
+        # PvPoke 매칭 가능하면 한글 디스플레이명 사용, 아니면 영문 fallback
+        en_name = b.get("name", "?")
+        p = find_boss_pokemon(en_name, state["gm"])
+        ko_name = sid_to_display.get(p["speciesId"], en_name) if p else en_name
+        return f"{badge} {ko_name}"
 
     def _boss_pool_sorted():
         order = {"5-Star": 0, "Mega": 1, "Elite": 1, "Shadow": 2, "3-Star": 3, "1-Star": 4}
@@ -2304,8 +2362,9 @@ def run_gui(gm):
         weak_sorted = sorted(weakness_mult.items(), key=lambda x: -x[1])
         weak_str = " ".join(f"{TYPE_KO[t]}({m:.1f}×)" for t, m in weak_sorted[:5])
         tier_label = boss_meta.get("tier", "")
+        boss_ko = sid_to_display.get(boss_p.get("speciesId", ""), boss_meta.get("name", "?"))
         boss_info_var.set(
-            f"▶ {boss_meta.get('name','?')} [{tier_label}] · 타입 {type_str}"
+            f"▶ {boss_ko} [{tier_label}] · 타입 {type_str}"
             + (f"  ·  주요 약점: {weak_str}" if weak_str else "")
         )
         weather = _weather_key()
@@ -2357,6 +2416,198 @@ def run_gui(gm):
     boss_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
     weather_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
     _populate_boss_combo()
+
+    # --- Tab 7: PvE DPS — 선택 포켓몬의 모든 무브셋 DPS 정렬 ---
+    dps_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(dps_tab, text="  PvE DPS  ")
+
+    dps_top = ttk.Frame(dps_tab)
+    dps_top.pack(fill="x", pady=(0, 6))
+    dps_pokemon_var = tk.StringVar(value="좌측에서 포켓몬 선택")
+    ttk.Label(dps_top, textvariable=dps_pokemon_var,
+              font=("", 11, "bold")).pack(side="left")
+
+    ttk.Label(dps_top, text="  타겟 방어 타입:", font=("", 9)).pack(side="left", padx=(20, 4))
+    dps_target_var = tk.StringVar(value="(중립)")
+    target_choices = ["(중립)"] + [TYPE_KO[t] for t in TYPES_ORDER]
+    ttk.Combobox(dps_top, textvariable=dps_target_var, values=target_choices,
+                 width=10, state="readonly"
+                 ).pack(side="left")
+
+    ttk.Label(dps_top, text="  날씨:", font=("", 9)).pack(side="left", padx=(12, 4))
+    dps_weather_var = tk.StringVar(value="(없음)")
+    ttk.Combobox(dps_top, textvariable=dps_weather_var, values=weather_choices,
+                 width=12, state="readonly").pack(side="left")
+
+    dps_status_var = tk.StringVar(
+        value="• 좌측 포켓몬 선택 시 자동 갱신 · Lv50/15·15·15 가정")
+    ttk.Label(dps_tab, textvariable=dps_status_var,
+              font=("", 8), foreground="#666").pack(anchor="w", pady=(0, 4))
+
+    dps_table_frame = ttk.Frame(dps_tab)
+    dps_table_frame.pack(fill="both", expand=True)
+    dps_scroll = ttk.Scrollbar(dps_table_frame, orient="vertical")
+    dps_scroll.pack(side="right", fill="y")
+    dps_cols = ("rank", "fast", "charged", "fast_dmg", "ch_dmg", "edps", "dps", "tdo")
+    dps_labels = ["#", "속공", "차지", "속공 데미지", "차지 데미지", "eDPS", "DPS", "TDO"]
+    dps_widths = [40, 200, 220, 90, 90, 70, 70, 80]
+    dps_tree = ttk.Treeview(dps_table_frame, columns=dps_cols, show="headings",
+                            yscrollcommand=dps_scroll.set, height=22)
+    for c, l, w in zip(dps_cols, dps_labels, dps_widths):
+        dps_tree.heading(c, text=l)
+        dps_tree.column(c, width=w, anchor="w" if c in ("fast", "charged") else "center")
+    dps_tree.pack(side="left", fill="both", expand=True)
+    dps_scroll.config(command=dps_tree.yview)
+
+    def _selected_attacker():
+        sel = listbox.curselection()
+        if not sel:
+            return None
+        disp = strip_star(listbox.get(sel[0]))
+        sid = display_to_sid.get(disp)
+        if not sid:
+            return None
+        return next((p for p in state["gm"]["pokemon"]
+                     if p.get("speciesId") == sid), None)
+
+    def _dps_target_types():
+        """타겟 방어 타입을 list 로. (중립) → []"""
+        v = dps_target_var.get()
+        for code, ko in TYPE_KO.items():
+            if ko == v:
+                return [code]
+        return []
+
+    def _dps_weather_key():
+        v = dps_weather_var.get()
+        for k, ko in WEATHER_KO.items():
+            if ko == v:
+                return k if k != "none" else None
+        return None
+
+    def refresh_pve_dps():
+        for r in dps_tree.get_children():
+            dps_tree.delete(r)
+        atk = _selected_attacker()
+        if not atk:
+            dps_pokemon_var.set("좌측에서 포켓몬 선택")
+            dps_status_var.set("• 좌측 포켓몬 선택 시 자동 갱신")
+            return
+        sid = atk.get("speciesId", "")
+        ko = sid_to_display.get(sid, sid)
+        types = " · ".join(TYPE_KO.get(t, t) for t in atk.get("types", [])
+                           if t and t != "none")
+        dps_pokemon_var.set(f"{ko}  ({types})")
+
+        target_types = _dps_target_types()
+        target_str = TYPE_KO.get(target_types[0], target_types[0]) if target_types else "중립"
+        weather = _dps_weather_key()
+
+        # 모든 (속공 × 차지) 조합 → DPS 리스트
+        fasts = (atk.get("fastMoves") or []) + (atk.get("eliteMoves") or [])
+        chargeds = (atk.get("chargedMoves") or []) + (atk.get("eliteMoves") or [])
+        rows = []
+        elite_set = set(atk.get("eliteMoves") or [])
+        for fid in fasts:
+            f = moves_by_id.get(fid)
+            if not f or f.get("energyGain", 0) <= 0:
+                continue
+            for cid in chargeds:
+                c = moves_by_id.get(cid)
+                if not c or c.get("energy", 0) <= 0:
+                    continue
+                # 보스 가정: 5성급 보스 (cpm 0.79, base def 180)
+                r = attacker_dps_vs(atk, f, c, target_types,
+                                    boss_cpm=0.79, boss_base_def=180,
+                                    weather=weather, attacker_level=50)
+                rows.append({**r, "fid": fid, "cid": cid})
+        rows.sort(key=lambda x: x["edps"], reverse=True)
+
+        def _move_ko(mid):
+            k = mid.lower().replace("_", "-")
+            return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
+
+        for i, r in enumerate(rows, 1):
+            f = moves_by_id[r["fid"]]
+            c = moves_by_id[r["cid"]]
+            f_lbl = f"{_move_ko(r['fid'])} ({TYPE_KO.get(f['type'], f['type'])})"
+            c_lbl = f"{_move_ko(r['cid'])} ({TYPE_KO.get(c['type'], c['type'])})"
+            elite_mark = ""
+            if r['fid'] in elite_set: f_lbl = "★ " + f_lbl
+            if r['cid'] in elite_set: c_lbl = "★ " + c_lbl
+            dps_tree.insert("", "end", values=(
+                i, f_lbl, c_lbl,
+                f"{r['fast_dmg']:.0f}",
+                f"{r['charged_dmg']:.0f}",
+                f"{r['edps']:.1f}",
+                f"{r['dps']:.1f}",
+                f"{r['tdo']:.0f}",
+            ))
+        dps_status_var.set(
+            f"• {len(rows)}개 무브셋 · 타겟={target_str} · 날씨={dps_weather_var.get()} · "
+            f"Lv50/15·15·15 가정 · ★ = 엘리트/레거시 무브"
+        )
+
+    ttk.Combobox  # (placeholder for next bind block)
+    for w in dps_top.winfo_children():
+        if isinstance(w, ttk.Combobox):
+            w.bind("<<ComboboxSelected>>", lambda e: refresh_pve_dps())
+
+    # --- Tab 8: PvE 다이맥스 도감 ---
+    dmax_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(dmax_tab, text="  PvE 다이맥스  ")
+
+    ttk.Label(dmax_tab,
+              text="포켓몬 GO 의 다이맥스/거다이맥스 가능 종 목록 (2026-04 기준, 손큐레이팅).\n"
+                   "맥스 무브: 18개 타입별 표준 무브 (각 타입의 속공 무브 → 동일 타입 맥스 무브로 강화).\n"
+                   "거다이맥스(GMax) 가능 종은 G열에 ★ 표시.",
+              font=("", 9), foreground="#555", justify="left"
+              ).pack(anchor="w", pady=(0, 6))
+
+    dmax_table_frame = ttk.Frame(dmax_tab)
+    dmax_table_frame.pack(fill="both", expand=True)
+    dmax_scroll = ttk.Scrollbar(dmax_table_frame, orient="vertical")
+    dmax_scroll.pack(side="right", fill="y")
+    dmax_cols = ("name", "types", "gmax", "atk", "def", "hp", "best_max")
+    dmax_labels = ["포켓몬", "타입", "G", "공", "방", "체", "최적 맥스 무브"]
+    dmax_widths = [180, 130, 30, 50, 50, 50, 200]
+    dmax_tree = ttk.Treeview(dmax_table_frame, columns=dmax_cols, show="headings",
+                             yscrollcommand=dmax_scroll.set, height=22)
+    for c, l, w in zip(dmax_cols, dmax_labels, dmax_widths):
+        dmax_tree.heading(c, text=l)
+        dmax_tree.column(c, width=w, anchor="w" if c in ("name", "best_max") else "center")
+    dmax_tree.pack(side="left", fill="both", expand=True)
+    dmax_scroll.config(command=dmax_tree.yview)
+
+    dmax_status_var = tk.StringVar(value="")
+    ttk.Label(dmax_tab, textvariable=dmax_status_var,
+              font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
+
+    def refresh_dynamax():
+        for r in dmax_tree.get_children():
+            dmax_tree.delete(r)
+        cnt = 0
+        for sid, gmax in DYNAMAX_POOL:
+            p = next((x for x in state["gm"]["pokemon"] if x.get("speciesId") == sid), None)
+            if not p:
+                continue
+            disp = sid_to_display.get(sid, sid)
+            types = [t for t in p.get("types", []) if t and t != "none"]
+            type_str = " · ".join(TYPE_KO.get(t, t) for t in types)
+            bs = p.get("baseStats", {})
+            # 추천 맥스 무브: 본인 STAB 타입 중 첫 번째
+            best_max = "맥스가드 / 맥스스피릿" if not types else \
+                       f"맥스{MAX_MOVE_KO.get(types[0], '?')}"
+            dmax_tree.insert("", "end", values=(
+                disp, type_str, "★" if gmax else "",
+                bs.get("atk", "—"), bs.get("def", "—"), bs.get("hp", "—"),
+                best_max,
+            ))
+            cnt += 1
+        dmax_status_var.set(
+            f"• 총 {cnt}/{len(DYNAMAX_POOL)} 종 표시 · ★ = 거다이맥스(GMax) 폼 존재 · "
+            "데이터: PokeMiners GAME_MASTER 기반 큐레이션"
+        )
 
     # ===== Actions =====
     last_query = [""]
@@ -3102,7 +3353,7 @@ def run_gui(gm):
         refresh()
         # 현재 IV로 포켓몬 찾기 탭 활성 시 그쪽도 자동 갱신
         try:
-            if notebook.tab(notebook.select(), "text").strip() == "IV로 포켓몬 찾기":
+            if notebook.tab(notebook.select(), "text").strip() == "PvP IV검색":
                 refresh_reverse()
         except Exception:
             pass
@@ -3123,8 +3374,19 @@ def run_gui(gm):
             refresh()
 
     summary_tree.bind("<<TreeviewSelect>>", on_summary_select)
-    listbox.bind("<<ListboxSelect>>", lambda e: refresh())
-    listbox.bind("<Return>", lambda e: refresh())
+    def _on_listbox_select(_e=None):
+        refresh()
+        # 활성 탭에 따라 추가 갱신 (PvE DPS / PvE 카운터 임의 보스 모드)
+        try:
+            tab = notebook.tab(notebook.select(), "text").strip()
+            if tab == "PvE DPS":
+                refresh_pve_dps()
+            elif tab == "PvE 카운터" and use_selected_var.get():
+                refresh_counters()
+        except Exception:
+            pass
+    listbox.bind("<<ListboxSelect>>", _on_listbox_select)
+    listbox.bind("<Return>", _on_listbox_select)
     meta_tree.bind("<Double-Button-1>", on_meta_double)
     meta_tree.bind("<Return>", on_meta_double)
 
@@ -3169,10 +3431,14 @@ def run_gui(gm):
     def _on_tab_changed(_e=None):
         try:
             tab = notebook.tab(notebook.select(), "text").strip()
-            if tab == "IV로 포켓몬 찾기":
+            if tab == "PvP IV검색":
                 refresh_reverse()
-            elif tab == "레이드 카운터":
+            elif tab == "PvE 카운터":
                 refresh_counters()
+            elif tab == "PvE DPS":
+                refresh_pve_dps()
+            elif tab == "PvE 다이맥스":
+                refresh_dynamax()
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
