@@ -4,6 +4,7 @@ rankings-*.json
 korean_names.csv
 moves.csv
 move_names.csv
+raids.json
 sprites/
 
 # 유저 로컬 상태

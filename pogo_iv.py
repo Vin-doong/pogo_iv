@@ -34,12 +34,14 @@ MOVES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v
 MOVE_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/data/v2/csv/move_names.csv"
 RANKINGS_URL_TEMPLATE = "https://raw.githubusercontent.com/pvpoke/pvpoke/master/src/data/rankings/{cup_id}/overall/rankings-{cap}.json"
 SPRITE_URL_BASE = "https://play.pokemonshowdown.com/sprites/gen5"
+SCRAPEDUCK_RAIDS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/raids.json"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_GM = os.path.join(SCRIPT_DIR, "gamemaster.json")
 CACHE_KO = os.path.join(SCRIPT_DIR, "korean_names.csv")
 CACHE_MOVES = os.path.join(SCRIPT_DIR, "moves.csv")
 CACHE_MOVE_NAMES = os.path.join(SCRIPT_DIR, "move_names.csv")
+CACHE_RAIDS = os.path.join(SCRIPT_DIR, "raids.json")
 SPRITE_DIR = os.path.join(SCRIPT_DIR, "sprites")
 FAVORITES_PATH = os.path.join(SCRIPT_DIR, "favorites.json")
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
@@ -434,12 +436,29 @@ def load_league_rankings(cup_id, cap, force=False):
         return []
 
 
+def load_raid_bosses(force=False):
+    """ScrapedDuck (LeekDuck mirror) 의 현재 레이드 보스 목록.
+    각 항목: {name, tier, types, image, ...}. 12h 마다 자동 갱신.
+    """
+    _ensure_file(CACHE_RAIDS, lambda p: _download(SCRAPEDUCK_RAIDS_URL, p),
+                 "현재 레이드 보스", DATA_MAX_AGE_DAYS, force)
+    if not os.path.exists(CACHE_RAIDS):
+        return []
+    try:
+        with open(CACHE_RAIDS, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"raids.json 파싱 실패: {e}")
+        return []
+
+
 def refresh_all_data():
     """모든 시즌별 데이터 강제 재다운로드. gm 갱신 후 LEAGUES 재구성."""
     gm = load_gamemaster(force=True)
     init_leagues(gm)
     load_korean_dex_map(force=True)
     load_move_ko_map(force=True)
+    load_raid_bosses(force=True)
     for lg in LEAGUES:
         load_league_rankings(lg.cup_id, lg.cap, force=True)
 
@@ -584,6 +603,204 @@ TYPE_CHART = {
     "fairy":    {"fire": NVE, "fighting": SE, "poison": NVE, "dragon": SE, "dark": SE,
                  "steel": NVE},
 }
+
+# ----- PvE: 레이드 카운터 추천용 데이터 / DPS 엔진 -----
+# 레이드 보스 별 CPM (티어별 고정값). 보스의 effective Def 계산에 사용.
+# 출처: pokemongohub / GamePress / 커뮤니티 합의
+RAID_TIER_CPM = {
+    "1": 0.5974, "3": 0.7300, "5": 0.7900,
+    "mega": 0.7900, "shadow": 0.7900, "elite": 0.7900,
+    "max": 0.7900,
+}
+
+# 날씨 → 부스트 받는 타입들 (1.2x 데미지)
+WEATHER_BOOSTS = {
+    "sunny":   {"fire", "grass", "ground"},
+    "rainy":   {"water", "electric", "bug"},
+    "partly_cloudy": {"normal", "rock"},
+    "cloudy":  {"fairy", "fighting", "poison"},
+    "windy":   {"dragon", "flying", "psychic"},
+    "snow":    {"ice", "steel"},
+    "fog":     {"dark", "ghost"},
+}
+
+WEATHER_KO = {
+    "sunny": "맑음/매우더움", "rainy": "비", "partly_cloudy": "구름조금",
+    "cloudy": "흐림", "windy": "바람", "snow": "눈", "fog": "안개",
+    "none": "(없음)",
+}
+
+# ScrapedDuck 의 보스 이름 → PvPoke speciesId 변환 규칙
+_BOSS_NAME_PREFIXES = [
+    ("Mega ",     "_mega"),
+    ("Primal ",   "_mega"),  # 그라에/카이오 프라이멀은 PvPoke 에 없을 수 있음
+    ("Alolan ",   "_alolan"),
+    ("Galarian ", "_galarian"),
+    ("Hisuian ",  "_hisuian"),
+    ("Paldean ",  "_paldean"),
+    ("Shadow ",   "_shadow"),
+]
+
+
+def _boss_name_to_sid(name):
+    """ScrapedDuck 보스 이름 → PvPoke speciesId 후보들 (우선순위 순)."""
+    n = name.strip()
+    suffix = ""
+    for prefix, suf in _BOSS_NAME_PREFIXES:
+        if n.startswith(prefix):
+            n = n[len(prefix):]
+            suffix = suf
+            break
+    # Mega Charizard X / Y → charizard_mega_x / _mega_y
+    if suffix == "_mega":
+        if n.endswith(" X"):
+            n = n[:-2]; suffix = "_mega_x"
+        elif n.endswith(" Y"):
+            n = n[:-2]; suffix = "_mega_y"
+    base = n.lower().replace(".", "").replace("'", "").replace("-", "_").replace(" ", "_")
+    return [base + suffix, base]  # suffix 있으면 우선, 없으면 base
+
+
+def find_boss_pokemon(boss_name, gm):
+    """보스 이름 → PvPoke pokemon 엔트리 (없으면 None)."""
+    by_sid = {p["speciesId"]: p for p in gm["pokemon"]}
+    for sid in _boss_name_to_sid(boss_name):
+        if sid in by_sid:
+            return by_sid[sid]
+    return None
+
+
+def _move_damage(power, atk_eff, def_eff, move_type, atk_types, def_types,
+                 weather_boosted, stab_mult=1.2, weather_mult=1.2):
+    """PoGO PvE 데미지 공식: floor(0.5 * Power * Atk/Def * STAB * Eff * Weather) + 1"""
+    if not power:
+        return 0.0
+    stab = stab_mult if move_type in atk_types else 1.0
+    eff = 1.0
+    for d in def_types:
+        if d and d != "none":
+            eff *= TYPE_CHART.get(move_type, {}).get(d, 1.0)
+    weather = weather_mult if weather_boosted else 1.0
+    return int(0.5 * power * (atk_eff / def_eff) * stab * eff * weather) + 1
+
+
+def _combo_dps(fast_dmg, fast_cd_s, fast_egain, charged_dmg, charged_cd_s, charged_ecost):
+    """속공 + 차지 조합의 평균 DPS. 1 사이클 = N×속공 + 1×차지 (N = ceil(에너지/얻는량))."""
+    if fast_cd_s <= 0:
+        return 0.0
+    if charged_ecost <= 0 or fast_egain <= 0 or charged_cd_s <= 0:
+        return fast_dmg / fast_cd_s
+    n = -(-charged_ecost // fast_egain)  # ceil(ec/eg)
+    cycle_dmg = n * fast_dmg + charged_dmg
+    cycle_time = n * fast_cd_s + charged_cd_s
+    return cycle_dmg / cycle_time if cycle_time > 0 else 0.0
+
+
+def attacker_dps_vs(attacker, fast, charged, boss_types,
+                    boss_cpm=0.79, boss_base_def=180, weather=None,
+                    attacker_level=50):
+    """공격자 1마리 × (속공, 차지) 조합 → DPS / TDO / eDPS.
+    attacker: PvPoke pokemon 엔트리. fast/charged: gamemaster moves 엔트리.
+    boss_types: 보스 타입 list (소문자, 'none' 허용).
+    weather: 날씨 string (부스트 계산), None 이면 부스트 없음.
+    """
+    base = attacker.get("baseStats", {})
+    sid = attacker.get("speciesId", "")
+    is_shadow = sid.endswith("_shadow")
+    atk_mult = 1.2 if is_shadow else 1.0
+    cpm_idx = min(int(round((attacker_level - 1.0) * 2)), len(CPM) - 1)
+    cpm = CPM[cpm_idx]
+    atk_eff = (base.get("atk", 0) + 15) * cpm * atk_mult
+    def_eff = (base.get("def", 0) + 15) * cpm / (1.2 if is_shadow else 1.0)
+    hp = int((base.get("hp", 0) + 15) * cpm)
+
+    boss_def_eff = (boss_base_def + 15) * boss_cpm
+    atk_types = [t for t in attacker.get("types", []) if t and t != "none"]
+
+    boosted_types = WEATHER_BOOSTS.get(weather, set()) if weather else set()
+    fast_dmg = _move_damage(fast.get("power", 0), atk_eff, boss_def_eff,
+                            fast.get("type", ""), atk_types, boss_types,
+                            fast.get("type", "") in boosted_types)
+    charged_dmg = _move_damage(charged.get("power", 0), atk_eff, boss_def_eff,
+                               charged.get("type", ""), atk_types, boss_types,
+                               charged.get("type", "") in boosted_types)
+    dps = _combo_dps(fast_dmg, fast.get("cooldown", 1000) / 1000.0,
+                     fast.get("energyGain", 0),
+                     charged_dmg, charged.get("cooldown", 500) / 1000.0,
+                     charged.get("energy", 0))
+    # TDO 근사: HP * DPS / 보스가 1초당 우리에게 입히는 추정데미지
+    # 단순화: 보스 base atk 대비 우리 def 비율 사용. 정확도 보다는 ranking 보조용.
+    boss_atk_assumed = boss_base_def * 1.5  # 대략 atk ≈ def * 1.5
+    incoming_dps = max(1.0, boss_atk_assumed * boss_cpm / def_eff * 35.0)
+    survival_s = hp / incoming_dps
+    tdo = dps * survival_s
+    edps = (dps * tdo) ** 0.5 if tdo > 0 else 0.0
+    return {"dps": dps, "tdo": tdo, "edps": edps,
+            "fast_dmg": fast_dmg, "charged_dmg": charged_dmg, "hp": hp}
+
+
+def best_moveset_vs(attacker, boss_types, moves_by_id, boss_cpm=0.79,
+                    boss_base_def=180, weather=None, attacker_level=50):
+    """공격자의 모든 (속공×차지) 조합 중 eDPS 최고 무브셋 반환."""
+    fasts = (attacker.get("fastMoves") or []) + (attacker.get("eliteMoves") or [])
+    chargeds = (attacker.get("chargedMoves") or []) + (attacker.get("eliteMoves") or [])
+    best = None
+    for fid in fasts:
+        f = moves_by_id.get(fid)
+        if not f or f.get("energyGain", 0) <= 0:
+            continue
+        for cid in chargeds:
+            c = moves_by_id.get(cid)
+            if not c or c.get("energy", 0) <= 0:
+                continue
+            r = attacker_dps_vs(attacker, f, c, boss_types,
+                                boss_cpm, boss_base_def, weather, attacker_level)
+            if best is None or r["edps"] > best["edps"]:
+                best = {**r, "fast_id": fid, "charged_id": cid,
+                        "fast_type": f.get("type", ""), "charged_type": c.get("type", "")}
+    return best
+
+
+def top_counters(boss, gm, moves_by_id, n=20, weather=None,
+                 include_shadow=True, include_mega=True,
+                 include_legendary=True, attacker_level=50,
+                 favorites_only=None):
+    """보스 → 카운터 TOP N. boss = pokemon 엔트리 (또는 dict with 'types','baseStats').
+    favorites_only: set of speciesIds to restrict to (None = 전체)."""
+    boss_types = [t for t in boss.get("types", []) if t and t != "none"]
+    boss_base_def = boss.get("baseStats", {}).get("def", 180)
+    # 보스 티어 추정: 메가/그림자 표기 있으면 해당 cpm
+    boss_sid = boss.get("speciesId", "")
+    if "_mega" in boss_sid:
+        boss_cpm = RAID_TIER_CPM["mega"]
+    else:
+        boss_cpm = RAID_TIER_CPM["5"]
+
+    results = []
+    for p in gm.get("pokemon", []):
+        sid = p.get("speciesId", "")
+        if sid == boss_sid:
+            continue  # 자기 자신 제외
+        if p.get("released") is False:
+            continue  # PvPoke 가 미출시로 표시한 종 (eternamax, primal 등) 제외
+        if not include_shadow and sid.endswith("_shadow"):
+            continue
+        if not include_mega and sid.endswith(("_mega", "_mega_x", "_mega_y")):
+            continue
+        if favorites_only is not None and sid not in favorites_only:
+            continue
+        if not include_legendary:
+            tags = p.get("tags") or []
+            if "legendary" in tags or "mythical" in tags:
+                continue
+        bm = best_moveset_vs(p, boss_types, moves_by_id, boss_cpm,
+                             boss_base_def, weather, attacker_level)
+        if bm is None:
+            continue
+        results.append({"sid": sid, "pokemon": p, **bm})
+    results.sort(key=lambda r: r["edps"], reverse=True)
+    return results[:n]
+
 
 # (species_base_id, move_id) → 획득 경로. PvPoke 의 eliteMoves 는 단일 boolean 이라
 # "커뮤데이/레이드/일반 엘리트 TM" 을 구분하지 못하므로, 신뢰도 높은 항목만
@@ -1920,6 +2137,227 @@ def run_gui(gm):
               font=("", 8), foreground="#666", justify="left"
               ).pack(anchor="w", pady=(8, 0))
 
+    # --- Tab 6: 레이드 카운터 (PvE) ---
+    raid_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(raid_tab, text="  레이드 카운터  ")
+
+    raid_state = {"bosses": [], "current_boss": None, "current_weather": None}
+    try:
+        raid_state["bosses"] = load_raid_bosses()
+    except Exception as e:
+        print(f"레이드 보스 로드 실패: {e}")
+
+    def _boss_label(b):
+        tier = b.get("tier", "")
+        if "5-Star" in tier or "5성" in tier:
+            badge = "[5★]"
+        elif "3-Star" in tier:
+            badge = "[3★]"
+        elif "1-Star" in tier:
+            badge = "[1★]"
+        elif "Mega" in tier:
+            badge = "[메가]"
+        elif "Shadow" in tier:
+            badge = "[그림자]"
+        elif "Elite" in tier:
+            badge = "[엘리트]"
+        else:
+            badge = f"[{tier}]"
+        return f"{badge} {b.get('name','?')}"
+
+    def _boss_pool_sorted():
+        order = {"5-Star": 0, "Mega": 1, "Elite": 1, "Shadow": 2, "3-Star": 3, "1-Star": 4}
+        def key(b):
+            t = b.get("tier", "")
+            for k, v in order.items():
+                if k in t:
+                    return (v, b.get("name", ""))
+            return (9, b.get("name", ""))
+        return sorted(raid_state["bosses"], key=key)
+
+    raid_top = ttk.Frame(raid_tab)
+    raid_top.pack(fill="x", pady=(0, 6))
+
+    ttk.Label(raid_top, text="보스", font=("", 10, "bold")).pack(side="left")
+    boss_var = tk.StringVar()
+    boss_combo = ttk.Combobox(raid_top, textvariable=boss_var, width=36,
+                              state="readonly", height=20)
+    boss_combo.pack(side="left", padx=(6, 16))
+
+    ttk.Label(raid_top, text="날씨", font=("", 10, "bold")).pack(side="left")
+    weather_var = tk.StringVar(value="(없음)")
+    weather_choices = ["(없음)"] + [WEATHER_KO[w] for w in
+                                     ["sunny","rainy","partly_cloudy","cloudy","windy","snow","fog"]]
+    weather_combo = ttk.Combobox(raid_top, textvariable=weather_var, values=weather_choices,
+                                 width=14, state="readonly")
+    weather_combo.pack(side="left", padx=(6, 16))
+
+    use_selected_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(raid_top, text="좌측 선택 포켓몬을 보스로",
+                    variable=use_selected_var,
+                    command=lambda: refresh_counters()).pack(side="left", padx=(0, 10))
+
+    ttk.Button(raid_top, text="레이드 목록 갱신", width=14,
+               command=lambda: _reload_raids()).pack(side="right")
+
+    # 보스 정보
+    boss_info_var = tk.StringVar(value="보스를 선택하세요")
+    ttk.Label(raid_tab, textvariable=boss_info_var,
+              font=("", 10), foreground="#444").pack(anchor="w", pady=(2, 4))
+
+    # 필터
+    raid_filter_row = ttk.Frame(raid_tab)
+    raid_filter_row.pack(fill="x", pady=(0, 6))
+    ttk.Label(raid_filter_row, text="공격자 풀:", font=("", 9), foreground="#555"
+              ).pack(side="left", padx=(0, 6))
+    inc_mega_var   = tk.BooleanVar(value=settings.get("pve_inc_mega",   True))
+    inc_shadow_var = tk.BooleanVar(value=settings.get("pve_inc_shadow", True))
+    inc_legend_var = tk.BooleanVar(value=settings.get("pve_inc_legend", True))
+    fav_attacker_var = tk.BooleanVar(value=False)
+    for txt, var in (("메가", inc_mega_var), ("그림자", inc_shadow_var),
+                     ("전설/환상", inc_legend_var),
+                     ("즐겨찾기만", fav_attacker_var)):
+        ttk.Checkbutton(raid_filter_row, text=txt, variable=var,
+                        command=lambda: refresh_counters()).pack(side="left", padx=(0, 8))
+
+    # 카운터 테이블
+    raid_table_frame = ttk.Frame(raid_tab)
+    raid_table_frame.pack(fill="both", expand=True)
+    raid_scroll = ttk.Scrollbar(raid_table_frame, orient="vertical")
+    raid_scroll.pack(side="right", fill="y")
+    raid_cols = ("rank", "name", "types", "fast", "charged", "edps", "dps", "tdo")
+    raid_labels = ["#", "포켓몬", "타입", "속공", "차지", "eDPS", "DPS", "TDO"]
+    raid_widths = [40, 180, 110, 130, 140, 70, 70, 80]
+    raid_tree = ttk.Treeview(raid_table_frame, columns=raid_cols, show="headings",
+                             yscrollcommand=raid_scroll.set, height=22)
+    for c, l, w in zip(raid_cols, raid_labels, raid_widths):
+        raid_tree.heading(c, text=l)
+        anchor = "w" if c in ("name", "fast", "charged") else "center"
+        raid_tree.column(c, width=w, anchor=anchor)
+    raid_tree.pack(side="left", fill="both", expand=True)
+    raid_scroll.config(command=raid_tree.yview)
+
+    raid_status_var = tk.StringVar(
+        value="• Lv50 / 15·15·15 가정 · 그림자는 1.2× 공/0.83× 방 적용 · "
+              "데이터 출처: ScrapedDuck (LeekDuck 미러)"
+    )
+    ttk.Label(raid_tab, textvariable=raid_status_var,
+              font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
+
+    def _populate_boss_combo():
+        bosses = _boss_pool_sorted()
+        labels = [_boss_label(b) for b in bosses]
+        boss_combo["values"] = labels
+        if labels and not boss_var.get():
+            boss_var.set(labels[0])
+
+    def _selected_boss_entry():
+        if use_selected_var.get():
+            sel = listbox.curselection()
+            if not sel:
+                return None, None
+            disp = strip_star(listbox.get(sel[0]))
+            sid = display_to_sid.get(disp)
+            if not sid:
+                return None, None
+            p = next((x for x in state["gm"]["pokemon"] if x["speciesId"] == sid), None)
+            return p, {"name": disp, "tier": "직접 선택"}
+        # combobox 에서 선택
+        label = boss_var.get()
+        if not label:
+            return None, None
+        bosses = _boss_pool_sorted()
+        idx = boss_combo.current()
+        if idx < 0 or idx >= len(bosses):
+            return None, None
+        b = bosses[idx]
+        p = find_boss_pokemon(b["name"], state["gm"])
+        return p, b
+
+    def _weather_key():
+        v = weather_var.get()
+        for k, ko in WEATHER_KO.items():
+            if ko == v:
+                return k if k != "none" else None
+        return None
+
+    def refresh_counters():
+        for r in raid_tree.get_children():
+            raid_tree.delete(r)
+        boss_p, boss_meta = _selected_boss_entry()
+        if not boss_p:
+            if boss_meta:
+                boss_info_var.set(f"보스 매칭 실패: {boss_meta.get('name','?')} (PvPoke 데이터 없음)")
+            else:
+                boss_info_var.set("보스를 선택하세요")
+            return
+        types = [t for t in boss_p.get("types", []) if t and t != "none"]
+        type_str = " · ".join(TYPE_KO.get(t, t) for t in types)
+        # 약점 계산 (다중 약점 — 1.6× 이상)
+        weakness_mult = {}
+        for atk in TYPES_ORDER:
+            mult = 1.0
+            for d in types:
+                mult *= TYPE_CHART.get(atk, {}).get(d, 1.0)
+            if mult > 1.05:
+                weakness_mult[atk] = mult
+        weak_sorted = sorted(weakness_mult.items(), key=lambda x: -x[1])
+        weak_str = " ".join(f"{TYPE_KO[t]}({m:.1f}×)" for t, m in weak_sorted[:5])
+        tier_label = boss_meta.get("tier", "")
+        boss_info_var.set(
+            f"▶ {boss_meta.get('name','?')} [{tier_label}] · 타입 {type_str}"
+            + (f"  ·  주요 약점: {weak_str}" if weak_str else "")
+        )
+        weather = _weather_key()
+        favs = favorites if fav_attacker_var.get() else None
+        cnt = top_counters(
+            boss_p, state["gm"], moves_by_id, n=20,
+            weather=weather,
+            include_shadow=inc_shadow_var.get(),
+            include_mega=inc_mega_var.get(),
+            include_legendary=inc_legend_var.get(),
+            favorites_only=favs,
+        )
+        for i, c in enumerate(cnt, 1):
+            disp = sid_to_display.get(c["sid"], c["sid"])
+            tps = " · ".join(TYPE_KO.get(t, t) for t in c["pokemon"].get("types", [])
+                             if t and t != "none")
+            def _move_ko(mid):
+                k = mid.lower().replace("_", "-")
+                return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
+            f_name = _move_ko(c["fast_id"])
+            ch_name = _move_ko(c["charged_id"])
+            f_type = TYPE_KO.get(c["fast_type"], c["fast_type"])
+            ch_type = TYPE_KO.get(c["charged_type"], c["charged_type"])
+            raid_tree.insert("", "end", values=(
+                i, disp, tps,
+                f"{f_name} ({f_type})",
+                f"{ch_name} ({ch_type})",
+                f"{c['edps']:.1f}",
+                f"{c['dps']:.1f}",
+                f"{c['tdo']:.0f}",
+            ))
+        if not cnt:
+            raid_status_var.set("⚠ 카운터 없음 — 필터를 완화해보세요")
+        else:
+            raid_status_var.set(
+                f"• {len(cnt)}마리 표시 · 날씨={weather_var.get()} · "
+                f"Lv50/15·15·15 가정 · 데이터: ScrapedDuck (LeekDuck 미러)"
+            )
+
+    def _reload_raids():
+        try:
+            raid_state["bosses"] = load_raid_bosses(force=True)
+        except Exception as e:
+            messagebox.showerror("실패", f"갱신 실패: {e}")
+            return
+        _populate_boss_combo()
+        refresh_counters()
+
+    boss_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
+    weather_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
+    _populate_boss_combo()
+
     # ===== Actions =====
     last_query = [""]
     last_fav_only = [None]
@@ -1996,6 +2434,11 @@ def run_gui(gm):
         move_ko_map.clear()
         move_ko_map.update(load_move_ko_map())
         ranking_cache.clear()
+        try:
+            raid_state["bosses"] = load_raid_bosses(force=True)
+            _populate_boss_combo()
+        except Exception:
+            pass
         update_data_status_label()
         update_listbox(force=True, auto_select=False)
         refresh_meta(force=True)
@@ -2722,11 +3165,14 @@ def run_gui(gm):
         root.bind(f"<Alt-Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
     root.bind("<Control-r>", lambda e: do_data_refresh())
 
-    # IV 역검색 탭으로 전환 시 자동으로 결과 갱신 (Tab 1 IV 공유)
+    # IV 역검색 / 레이드 카운터 탭으로 전환 시 자동으로 결과 갱신
     def _on_tab_changed(_e=None):
         try:
-            if notebook.tab(notebook.select(), "text").strip() == "IV로 포켓몬 찾기":
+            tab = notebook.tab(notebook.select(), "text").strip()
+            if tab == "IV로 포켓몬 찾기":
                 refresh_reverse()
+            elif tab == "레이드 카운터":
+                refresh_counters()
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
@@ -2756,6 +3202,9 @@ def run_gui(gm):
             settings["show_normal"] = bool(show_normal_var.get())
             settings["show_shadow"] = bool(show_shadow_var.get())
             settings["show_mega"]   = bool(show_mega_var.get())
+            settings["pve_inc_mega"]   = bool(inc_mega_var.get())
+            settings["pve_inc_shadow"] = bool(inc_shadow_var.get())
+            settings["pve_inc_legend"] = bool(inc_legend_var.get())
             settings["league"] = league_var.get()
             save_settings(settings)
         except Exception:
