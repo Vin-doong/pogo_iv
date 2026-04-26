@@ -2829,6 +2829,116 @@ def run_gui(gm):
     dmax_tree.bind("<Double-Button-1>", _on_dmax_double)
     dmax_tree.bind("<Return>", _on_dmax_double)
 
+    # --- Tab 9: PvE 로켓 — 로켓단 그런트 카운터 ---
+    rkt_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(rkt_tab, text="  PvE 로켓  ")
+
+    ttk.Label(rkt_tab,
+              text="로켓단 그런트 카운터 — 그런트는 항상 한 가지 타입 테마로 팀을 구성하므로,\n"
+                   "타입을 고르면 그 타입에 강한 카운터 TOP 20을 보여줍니다.\n"
+                   "리더(클리프/아르로/시에라)와 지오반니는 로테이션 주기가 짧으므로 별도 표 대신,\n"
+                   "PvE 카운터 탭의 \"좌측 선택 포켓몬을 보스로\" 모드를 활용하세요.",
+              font=("", 9), foreground="#555", justify="left"
+              ).pack(anchor="w", pady=(0, 8))
+
+    rkt_top = ttk.Frame(rkt_tab)
+    rkt_top.pack(fill="x", pady=(0, 6))
+    ttk.Label(rkt_top, text="그런트 타입", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
+    rkt_type_var = tk.StringVar(value=TYPE_KO["fire"])
+    rkt_type_combo = ttk.Combobox(rkt_top, textvariable=rkt_type_var,
+                                  values=[TYPE_KO[t] for t in TYPES_ORDER],
+                                  width=8, state="readonly")
+    rkt_type_combo.pack(side="left", padx=(0, 20))
+
+    ttk.Label(rkt_top, text="공격자 Lv", font=("", 10, "bold")).pack(side="left", padx=(0, 4))
+    rkt_lv_var = tk.StringVar(value="50")
+    rkt_lv_combo = ttk.Combobox(rkt_top, textvariable=rkt_lv_var,
+                                values=["40", "45", "50", "51"],
+                                width=5, state="readonly")
+    rkt_lv_combo.pack(side="left", padx=(0, 16))
+
+    rkt_inc_mega_var = tk.BooleanVar(value=True)
+    rkt_inc_shadow_var = tk.BooleanVar(value=True)
+    rkt_inc_legend_var = tk.BooleanVar(value=True)
+    for txt, var in (("메가", rkt_inc_mega_var), ("그림자", rkt_inc_shadow_var),
+                     ("전설/환상", rkt_inc_legend_var)):
+        ttk.Checkbutton(rkt_top, text=txt, variable=var,
+                        command=lambda: refresh_rocket()
+                        ).pack(side="left", padx=(0, 6))
+
+    # 로켓단 카운터 표
+    rkt_table_frame = ttk.Frame(rkt_tab)
+    rkt_table_frame.pack(fill="both", expand=True)
+    rkt_scroll = ttk.Scrollbar(rkt_table_frame, orient="vertical")
+    rkt_scroll.pack(side="right", fill="y")
+    rkt_cols = ("rank", "name", "types", "fast", "charged", "edps", "dps")
+    rkt_labels = ["#", "포켓몬", "타입", "속공", "차지", "eDPS", "DPS"]
+    rkt_widths = [40, 180, 110, 140, 160, 70, 70]
+    rkt_tree = ttk.Treeview(rkt_table_frame, columns=rkt_cols, show="headings",
+                            yscrollcommand=rkt_scroll.set, height=20)
+    for c, l, w in zip(rkt_cols, rkt_labels, rkt_widths):
+        rkt_tree.heading(c, text=l)
+        rkt_tree.column(c, width=w, anchor="w" if c in ("name", "fast", "charged") else "center")
+    rkt_tree.pack(side="left", fill="both", expand=True)
+    rkt_scroll.config(command=rkt_tree.yview)
+
+    rkt_status_var = tk.StringVar(
+        value="• 그런트 보스 능력치는 평균값 가정 (atk=200/def=180) · "
+              "그림자 적은 1.2× 공격 적용 (실제와 동일)")
+    ttk.Label(rkt_tab, textvariable=rkt_status_var,
+              font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
+
+    def _rkt_type_code():
+        v = rkt_type_var.get()
+        for code, ko in TYPE_KO.items():
+            if ko == v:
+                return code
+        return "fire"
+
+    def refresh_rocket():
+        for r in rkt_tree.get_children():
+            rkt_tree.delete(r)
+        target = _rkt_type_code()
+        # 가상 보스: 그런트 평균 능치 + 선택 타입 단일
+        # 그림자 1.2x 공격은 어차피 이 보스의 def 만 영향 — counter 우선순위는 동일
+        synthetic_boss = {
+            "speciesId": f"_grunt_{target}",
+            "types": [target, "none"],
+            "baseStats": {"atk": 200, "def": 180, "hp": 200},
+        }
+        try:
+            atk_lv = float(rkt_lv_var.get())
+        except ValueError:
+            atk_lv = 50.0
+        cnt = top_counters(
+            synthetic_boss, state["gm"], moves_by_id, n=20,
+            weather=None,
+            include_shadow=rkt_inc_shadow_var.get(),
+            include_mega=rkt_inc_mega_var.get(),
+            include_legendary=rkt_inc_legend_var.get(),
+            attacker_level=atk_lv,
+        )
+        def _move_ko(mid):
+            k = mid.lower().replace("_", "-")
+            return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
+        for i, c in enumerate(cnt, 1):
+            disp = sid_to_display.get(c["sid"], c["sid"])
+            tps = " · ".join(TYPE_KO.get(t, t) for t in c["pokemon"].get("types", [])
+                             if t and t != "none")
+            f_lbl = f"{_move_ko(c['fast_id'])} ({TYPE_KO.get(c['fast_type'], c['fast_type'])})"
+            c_lbl = f"{_move_ko(c['charged_id'])} ({TYPE_KO.get(c['charged_type'], c['charged_type'])})"
+            rkt_tree.insert("", "end", values=(
+                i, disp, tps, f_lbl, c_lbl,
+                f"{c['edps']:.1f}", f"{c['dps']:.1f}",
+            ))
+        rkt_status_var.set(
+            f"• {len(cnt)}마리 표시 · 그런트 타입={rkt_type_var.get()} · "
+            f"Lv{rkt_lv_var.get()}/15·15·15 가정 · 그림자/메가 적은 그대로 사용 가능"
+        )
+
+    rkt_type_combo.bind("<<ComboboxSelected>>", lambda e: refresh_rocket())
+    rkt_lv_combo.bind("<<ComboboxSelected>>", lambda e: refresh_rocket())
+
     # ===== Actions =====
     last_query = [""]
     last_fav_only = [None]
@@ -3662,6 +3772,8 @@ def run_gui(gm):
                 refresh_pve_dps()
             elif tab == "PvE 다이맥스":
                 refresh_dynamax()
+            elif tab == "PvE 로켓":
+                refresh_rocket()
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
