@@ -718,6 +718,57 @@ DYNAMAX_POOL = [
     ("eternatus_eternamax", False),  # 6성 전용 보스
 ]
 
+# 로켓단 그런트 배틀 전 대사 → 타입 매핑 (한국 PoGO 공식 대사)
+# 출처: namu.wiki / poketory.com 교차 검증
+# 키워드 substring 매치로 타입 추정 (구두점/띄어쓰기 무관). 매칭 우선순위는 정의 순서.
+# 각 타입마다 (1) 핵심 어구 + (2) 짧은 단일 단어 키워드를 추가해 약식 입력도 매칭되게 함.
+GRUNT_PHRASES = [
+    # (키워드, 타입 code, 대표 대사)
+    # 핵심 어구 (긴 매칭 — 우선)
+    ("노말이 약하다",   "normal",   "노말이 약하다고 생각해?"),
+    ("단단한 몸",       "fighting", "이 단단한 몸은 장식이 아니야!"),
+    ("새포켓몬",        "flying",   "내 새포켓몬이 배틀을 원한다! (남)"),
+    ("화려하게 날아",   "flying",   "내 포켓몬이 화려하게 날아오른다! (여)"),
+    ("독으로 공격",     "poison",   "독으로 공격할 준비 완료!"),
+    ("땅에 때려",       "ground",   "땅에 때려눕혀 주지!"),
+    ("락앤롤",          "rock",     "렛츠 락앤롤!"),
+    ("벌레 포켓몬",     "bug",      "가랏! 내 벌레 포켓몬!"),
+    ("흐... 흐",        "ghost",    "흐... 흐... 흐... 흐... 흐흣!"),
+    ("흐흐",            "ghost",    "흐... 흐... 흐... 흐... 흐흣!"),
+    ("철벽",            "steel",    "철벽 공격이다!"),
+    ("불의 온도",       "fire",     "포켓몬이 뱉어내는 불의 온도가 몇 도인지 알아?"),
+    ("바다는 위험",     "water",    "이 바다는 위험해!"),
+    ("바다",            "water",    "이 바다는 위험해!"),
+    ("우릴 상관",       "grass",    "우릴 상관 마!"),
+    ("짜릿",            "electric", "짜릿하게 만들어주지!"),
+    ("에스퍼",          "psychic",  "보이지 않는 힘을 쓰는 에스퍼를 무섭다고 생각해?"),
+    ("얼려",            "ice",      "널 얼려버리겠다!"),
+    ("크아",            "dragon",   "크아아아아! 무섭지!"),
+    ("그늘",            "dark",     "빛이 있으면 그늘이 있는 법."),
+    ("귀여운 포켓몬",   "fairy",    "내 귀여운 포켓몬 어때!"),
+    ("귀여운",          "fairy",    "내 귀여운 포켓몬 어때!"),
+]
+
+# 특수(decoy) 그런트 — 단일 타입으로 매핑 안 됨, 멀티 타입 팀 (잠만보 등)
+GRUNT_PHRASES_SPECIAL = [
+    "어디 이겨볼까", "각오해", "승자만이 승리", "이미 이겼어",
+]
+
+
+def find_grunt_type(phrase):
+    """그런트 대사 → ('type_code', '대표 대사') 또는 ('special', None) 또는 (None, None)."""
+    if not phrase:
+        return (None, None)
+    norm = phrase.strip().lower().replace(" ", "")
+    for kw, code, rep in GRUNT_PHRASES:
+        if kw.lower().replace(" ", "") in norm:
+            return (code, rep)
+    for kw in GRUNT_PHRASES_SPECIAL:
+        if kw.lower().replace(" ", "") in norm:
+            return ("special", None)
+    return (None, None)
+
+
 # 18 타입 → Max Move 한글명 (Sword/Shield 한국어판 기준)
 MAX_MOVE_KO = {
     "normal":   "러시",     "fire":     "플레어",
@@ -2834,12 +2885,23 @@ def run_gui(gm):
     notebook.add(rkt_tab, text="  PvE 로켓  ")
 
     ttk.Label(rkt_tab,
-              text="로켓단 그런트 카운터 — 그런트는 항상 한 가지 타입 테마로 팀을 구성하므로,\n"
-                   "타입을 고르면 그 타입에 강한 카운터 TOP 20을 보여줍니다.\n"
-                   "리더(클리프/아르로/시에라)와 지오반니는 로테이션 주기가 짧으므로 별도 표 대신,\n"
+              text="로켓단 그런트 카운터 — 그런트는 항상 한 가지 타입 테마로 팀을 구성합니다.\n"
+                   "배틀 전 대사를 입력하거나 직접 타입을 선택하세요. 카운터 TOP 20 자동 표시.\n"
+                   "리더(클리프/아르로/시에라)/지오반니는 로테이션 주기가 짧으므로 별도 표 대신,\n"
                    "PvE 카운터 탭의 \"좌측 선택 포켓몬을 보스로\" 모드를 활용하세요.",
               font=("", 9), foreground="#555", justify="left"
               ).pack(anchor="w", pady=(0, 8))
+
+    # 대사 입력 (선택 시 타입 자동 추정)
+    rkt_phrase_row = ttk.Frame(rkt_tab)
+    rkt_phrase_row.pack(fill="x", pady=(0, 6))
+    ttk.Label(rkt_phrase_row, text="그런트 대사", font=("", 10, "bold")).pack(side="left", padx=(0, 6))
+    rkt_phrase_var = tk.StringVar(value="")
+    rkt_phrase_entry = ttk.Entry(rkt_phrase_row, textvariable=rkt_phrase_var, width=40)
+    rkt_phrase_entry.pack(side="left", padx=(0, 8))
+    rkt_phrase_result = tk.StringVar(value="(예: \"이 바다는 위험해!\" → 물 타입)")
+    ttk.Label(rkt_phrase_row, textvariable=rkt_phrase_result,
+              font=("", 9), foreground="#666").pack(side="left")
 
     rkt_top = ttk.Frame(rkt_tab)
     rkt_top.pack(fill="x", pady=(0, 6))
@@ -2938,6 +3000,29 @@ def run_gui(gm):
 
     rkt_type_combo.bind("<<ComboboxSelected>>", lambda e: refresh_rocket())
     rkt_lv_combo.bind("<<ComboboxSelected>>", lambda e: refresh_rocket())
+
+    rkt_phrase_pending = [None]
+    def _apply_phrase():
+        phrase = rkt_phrase_var.get()
+        if not phrase.strip():
+            rkt_phrase_result.set("(예: \"이 바다는 위험해!\" → 물 타입)")
+            return
+        code, rep = find_grunt_type(phrase)
+        if code == "special":
+            rkt_phrase_result.set("⚠ 특수 그런트 (멀티 타입, 잠만보 등) — 타입 추정 불가")
+            return
+        if not code:
+            rkt_phrase_result.set("⚠ 매칭 안 됨 — 대사 일부 키워드만 입력해도 됨 (예: '바다', '얼려', '짜릿')")
+            return
+        rkt_type_var.set(TYPE_KO[code])
+        rkt_phrase_result.set(f"→ {TYPE_KO[code]} 타입 (대표: {rep})")
+        refresh_rocket()
+    def _on_phrase_change(*_):
+        if rkt_phrase_pending[0]:
+            root.after_cancel(rkt_phrase_pending[0])
+        rkt_phrase_pending[0] = root.after(150, _apply_phrase)
+    rkt_phrase_var.trace_add("write", _on_phrase_change)
+    rkt_phrase_entry.bind("<Return>", lambda e: _apply_phrase())
 
     # ===== Actions =====
     last_query = [""]
