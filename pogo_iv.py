@@ -550,7 +550,47 @@ MOVE_KO_OVERRIDES = {
     "weather-ball-water": "웨더볼 (물)",
     "weather-ball-ice":  "웨더볼 (얼음)",
     "weather-ball-rock": "웨더볼 (바위)",
+    "weather-ball-normal": "웨더볼",
     "weather-ball":      "웨더볼",
+    # 9세대 / 신규 무브
+    "aqua-step":         "아쿠아스텝",
+    "torch-song":        "토치송",
+    "flower-trick":      "플라워트릭",
+    # 폼 변형 무브 (PvPoke 가 form 별로 분리)
+    "techno-blast-burn":    "테크노버스터 (불꽃)",
+    "techno-blast-chill":   "테크노버스터 (얼음)",
+    "techno-blast-douse":   "테크노버스터 (물)",
+    "techno-blast-shock":   "테크노버스터 (전기)",
+    "techno-blast-normal":  "테크노버스터",
+    "aura-wheel-dark":      "오라휠 (악)",
+    "aura-wheel-electric":  "오라휠 (전기)",
+    "hydro-pump-blastoise": "하이드로펌프 (거북왕)",
+    "water-gun-fast-blastoise": "물대포 (거북왕)",
+    "aegislash-charge-air-slash":  "에어슬래시 (블레이드폼)",
+    "aegislash-charge-psycho-cut": "사이코커터 (블레이드폼)",
+    # 토네/볼트/랜드/러브로스 영물 폼 무브
+    "bleakwind-storm":   "블리자드스톰",
+    "sandsear-storm":    "샌드스톰",
+    "springtide-storm":  "스프링스톰",
+    "wildbolt-storm":    "썬더스톰",
+    # 히든파워 18타입 (각 타입별)
+    "hidden-power-bug":      "히든파워 (벌레)",
+    "hidden-power-dark":     "히든파워 (악)",
+    "hidden-power-dragon":   "히든파워 (드래곤)",
+    "hidden-power-electric": "히든파워 (전기)",
+    "hidden-power-fighting": "히든파워 (격투)",
+    "hidden-power-fire":     "히든파워 (불꽃)",
+    "hidden-power-flying":   "히든파워 (비행)",
+    "hidden-power-ghost":    "히든파워 (고스트)",
+    "hidden-power-grass":    "히든파워 (풀)",
+    "hidden-power-ground":   "히든파워 (땅)",
+    "hidden-power-ice":      "히든파워 (얼음)",
+    "hidden-power-normal":   "히든파워",
+    "hidden-power-poison":   "히든파워 (독)",
+    "hidden-power-psychic":  "히든파워 (에스퍼)",
+    "hidden-power-rock":     "히든파워 (바위)",
+    "hidden-power-steel":    "히든파워 (강철)",
+    "hidden-power-water":    "히든파워 (물)",
 }
 
 TYPE_KO = {
@@ -606,11 +646,16 @@ TYPE_CHART = {
 
 # ----- PvE: 레이드 카운터 추천용 데이터 / DPS 엔진 -----
 # 레이드 보스 별 CPM (티어별 고정값). 보스의 effective Def 계산에 사용.
-# 출처: pokemongohub / GamePress / 커뮤니티 합의
+# 출처: GamePress / Pokebattler 공식 raid CPM
+# T5/메가/엘리트/그림자는 모두 동일 cpm (0.5793) 사용 — 일반 강화 cpm 과 다른 별도 보스 cpm
 RAID_TIER_CPM = {
-    "1": 0.5974, "3": 0.7300, "5": 0.7900,
-    "mega": 0.7900, "shadow": 0.7900, "elite": 0.7900,
-    "max": 0.7900,
+    "1": 0.6,
+    "3": 0.7,
+    "5": 0.5793,
+    "mega": 0.5793,
+    "shadow": 0.5793,
+    "elite": 0.5793,
+    "max": 1.0,  # 맥스 배틀 보스는 훨씬 단단함 (근사치)
 }
 
 # 날씨 → 부스트 받는 타입들 (1.2x 데미지)
@@ -697,22 +742,43 @@ _BOSS_NAME_PREFIXES = [
 
 
 def _boss_name_to_sid(name):
-    """ScrapedDuck 보스 이름 → PvPoke speciesId 후보들 (우선순위 순)."""
+    """ScrapedDuck 보스 이름 → PvPoke speciesId 후보들 (우선순위 순).
+    "Shadow Alolan Marowak" 같은 복합 prefix 도 처리 (shadow + region/mega)."""
     n = name.strip()
-    suffix = ""
-    for prefix, suf in _BOSS_NAME_PREFIXES:
-        if n.startswith(prefix):
-            n = n[len(prefix):]
-            suffix = suf
+    suffixes = []
+    # 복합 prefix 반복 적용 (예: "Shadow Alolan Marowak" → shadow + alolan)
+    while True:
+        matched = False
+        for prefix, suf in _BOSS_NAME_PREFIXES:
+            if n.startswith(prefix):
+                n = n[len(prefix):]
+                suffixes.append(suf)
+                matched = True
+                break
+        if not matched:
             break
     # Mega Charizard X / Y → charizard_mega_x / _mega_y
-    if suffix == "_mega":
+    if "_mega" in suffixes:
         if n.endswith(" X"):
-            n = n[:-2]; suffix = "_mega_x"
+            n = n[:-2]
+            suffixes = [s if s != "_mega" else "_mega_x" for s in suffixes]
         elif n.endswith(" Y"):
-            n = n[:-2]; suffix = "_mega_y"
+            n = n[:-2]
+            suffixes = [s if s != "_mega" else "_mega_y" for s in suffixes]
     base = n.lower().replace(".", "").replace("'", "").replace("-", "_").replace(" ", "_")
-    return [base + suffix, base]  # suffix 있으면 우선, 없으면 base
+    # 후보 우선순위: (1) 모든 suffix 적용, (2) shadow 만 우선, (3) base only
+    candidates = []
+    if suffixes:
+        # PvPoke 는 region 먼저 + shadow 마지막 순으로 sid 구성
+        # (예: marowak_alolan_shadow). 우선 region/mega 다음에 shadow.
+        ordered = [s for s in suffixes if s != "_shadow"] + \
+                  [s for s in suffixes if s == "_shadow"]
+        candidates.append(base + "".join(ordered))
+        # shadow 만 단독으로도 시도 (region 없는 케이스 대비)
+        if "_shadow" in suffixes:
+            candidates.append(base + "_shadow")
+    candidates.append(base)
+    return candidates
 
 
 def find_boss_pokemon(boss_name, gm):
@@ -768,7 +834,8 @@ def attacker_dps_vs(attacker, fast, charged, boss_types,
     def_eff = (base.get("def", 0) + 15) * cpm / (1.2 if is_shadow else 1.0)
     hp = int((base.get("hp", 0) + 15) * cpm)
 
-    boss_def_eff = (boss_base_def + 15) * boss_cpm
+    # 레이드 보스 effective Def: GamePress 공식은 base_def 만 사용 (+15 IV 가산 없음)
+    boss_def_eff = boss_base_def * boss_cpm
     atk_types = [t for t in attacker.get("types", []) if t and t != "none"]
 
     boosted_types = WEATHER_BOOSTS.get(weather, set()) if weather else set()
@@ -818,14 +885,16 @@ def best_moveset_vs(attacker, boss_types, moves_by_id, boss_cpm=0.79,
 def top_counters(boss, gm, moves_by_id, n=20, weather=None,
                  include_shadow=True, include_mega=True,
                  include_legendary=True, attacker_level=50,
-                 favorites_only=None):
+                 favorites_only=None, force_boss_cpm=None):
     """보스 → 카운터 TOP N. boss = pokemon 엔트리 (또는 dict with 'types','baseStats').
-    favorites_only: set of speciesIds to restrict to (None = 전체)."""
+    favorites_only: set of speciesIds to restrict to (None = 전체).
+    force_boss_cpm: 지정 시 티어 추정 무시하고 이 CPM 사용 (예: 맥스 배틀 1.0)."""
     boss_types = [t for t in boss.get("types", []) if t and t != "none"]
     boss_base_def = boss.get("baseStats", {}).get("def", 180)
-    # 보스 티어 추정: 메가/그림자 표기 있으면 해당 cpm
     boss_sid = boss.get("speciesId", "")
-    if "_mega" in boss_sid:
+    if force_boss_cpm is not None:
+        boss_cpm = force_boss_cpm
+    elif "_mega" in boss_sid:
         boss_cpm = RAID_TIER_CPM["mega"]
     else:
         boss_cpm = RAID_TIER_CPM["5"]
@@ -1214,6 +1283,42 @@ def _compose_display(base_name, is_shadow, mega_pair, region_kor, form_ko):
     if form_ko:
         disp = f"{disp} ({form_ko})"
     return disp
+
+
+def build_sid_display_full(gm, dex_to_ko):
+    """모든 sid → 한글 디스플레이 (dedupe 없음, released=False 포함).
+    build_display_entries 가 dedupe 로 빠뜨린 폼들을 위한 보조 맵."""
+    by_sid = {p.get("speciesId"): p for p in gm["pokemon"]}
+    dex_clean_sids = {}
+    for p in gm["pokemon"]:
+        sid = p.get("speciesId", "")
+        dex_clean_sids.setdefault(p.get("dex"), set()).add(_strip_variant_suffixes(sid))
+    dex_common_base = {}
+    for dex, sset in dex_clean_sids.items():
+        if len(sset) <= 1:
+            continue
+        slist = sorted(sset)
+        common = slist[0]
+        for s in slist[1:]:
+            while common and not s.startswith(common):
+                common = common[:-1]
+        common = common.rstrip("_")
+        if common:
+            dex_common_base[dex] = common
+    out = {}
+    for p in gm["pokemon"]:
+        sid = p.get("speciesId", "")
+        base_sid, is_shadow, mega_pair, region_kor, form_suffix = _decompose_sid(
+            sid, by_sid, dex_common_base
+        )
+        base_name = (
+            dex_to_ko.get(p.get("dex"))
+            or by_sid.get(base_sid, {}).get("speciesName")
+            or p.get("speciesName", sid)
+        )
+        form_ko = FORM_KO.get(form_suffix, form_suffix.replace("_", " ")) if form_suffix else ""
+        out[sid] = _compose_display(base_name, is_shadow, mega_pair, region_kor, form_ko)
+    return out
 
 
 def build_display_entries(gm, dex_to_ko):
@@ -1619,6 +1724,10 @@ def run_gui(gm):
     entries = build_display_entries(gm, dex_to_ko)
     display_to_sid = dict(entries)
     sid_to_display = {s: d for d, s in entries}
+    sid_to_display_full = build_sid_display_full(gm, dex_to_ko)
+    # build_display_entries 가 dedupe 한 폼들 보충 (큐레무 화이트, 게노세크트 드라이브 등)
+    for sid, disp in sid_to_display_full.items():
+        sid_to_display.setdefault(sid, disp)
     all_displays_full = sorted(display_to_sid.keys(), key=lambda s: s.lower())
 
     # Preload league meta rankings (PvPoke overall)
@@ -2250,6 +2359,15 @@ def run_gui(gm):
                                  width=14, state="readonly")
     weather_combo.pack(side="left", padx=(6, 16))
 
+    ttk.Label(raid_top, text="모드", font=("", 10, "bold")).pack(side="left")
+    boss_mode_var = tk.StringVar(value="raid")
+    ttk.Radiobutton(raid_top, text="일반 레이드", variable=boss_mode_var,
+                    value="raid", command=lambda: refresh_counters()
+                    ).pack(side="left", padx=(6, 2))
+    ttk.Radiobutton(raid_top, text="맥스 배틀", variable=boss_mode_var,
+                    value="max", command=lambda: refresh_counters()
+                    ).pack(side="left", padx=(0, 16))
+
     use_selected_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(raid_top, text="좌측 선택 포켓몬을 보스로",
                     variable=use_selected_var,
@@ -2295,12 +2413,22 @@ def run_gui(gm):
     raid_tree.pack(side="left", fill="both", expand=True)
     raid_scroll.config(command=raid_tree.yview)
 
+    # 6마리 라인업 클리어 시간 추정
+    raid_lineup_var = tk.StringVar(value="")
+    ttk.Label(raid_tab, textvariable=raid_lineup_var,
+              font=("", 9, "bold"), foreground="#205080").pack(anchor="w", pady=(6, 0))
+
     raid_status_var = tk.StringVar(
         value="• Lv50 / 15·15·15 가정 · 그림자는 1.2× 공/0.83× 방 적용 · "
               "데이터 출처: ScrapedDuck (LeekDuck 미러)"
     )
     ttk.Label(raid_tab, textvariable=raid_status_var,
               font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
+    ttk.Label(raid_tab,
+              text="⚠ DPS 절대값은 PvP 소스(pvpoke) 기반이라 PvE 실측보다 보수적 — "
+                   "카운터 순위는 정확하지만 클리어 시간은 낙관 추정치임.",
+              font=("", 8), foreground="#a06030"
+              ).pack(anchor="w", pady=(2, 0))
 
     def _populate_boss_combo():
         bosses = _boss_pool_sorted()
@@ -2369,6 +2497,10 @@ def run_gui(gm):
         )
         weather = _weather_key()
         favs = favorites if fav_attacker_var.get() else None
+        # 맥스 배틀 모드는 보스가 훨씬 단단함 (CPM ≈ 1.0). 임시로 boss_p 의 baseStats 를
+        # 일시적으로 부풀리는 대신, top_counters 안의 cpm 분기 로직을 우회하기 위해
+        # 보스 sid 에 _mega 가 없어도 강제 max cpm 을 쓰도록 처리.
+        is_max_mode = (boss_mode_var.get() == "max")
         cnt = top_counters(
             boss_p, state["gm"], moves_by_id, n=20,
             weather=weather,
@@ -2376,6 +2508,7 @@ def run_gui(gm):
             include_mega=inc_mega_var.get(),
             include_legendary=inc_legend_var.get(),
             favorites_only=favs,
+            force_boss_cpm=(1.0 if is_max_mode else None),
         )
         for i, c in enumerate(cnt, 1):
             disp = sid_to_display.get(c["sid"], c["sid"])
@@ -2398,10 +2531,37 @@ def run_gui(gm):
             ))
         if not cnt:
             raid_status_var.set("⚠ 카운터 없음 — 필터를 완화해보세요")
+            raid_lineup_var.set("")
         else:
             raid_status_var.set(
-                f"• {len(cnt)}마리 표시 · 날씨={weather_var.get()} · "
-                f"Lv50/15·15·15 가정 · 데이터: ScrapedDuck (LeekDuck 미러)"
+                f"• {len(cnt)}마리 표시 · 모드={'맥스 배틀' if is_max_mode else '일반 레이드'} · "
+                f"날씨={weather_var.get()} · Lv50/15·15·15 가정"
+            )
+            # 6마리 라인업 클리어 시간 추정
+            # 보스 HP: 일반 레이드 5성≈15000, 맥스≈100000 (대략)
+            tier_label = boss_meta.get("tier", "")
+            if is_max_mode:
+                boss_hp_est = 100000
+            elif "5-Star" in tier_label or "Mega" in tier_label or "Elite" in tier_label or "Shadow" in tier_label:
+                boss_hp_est = 15000
+            elif "3-Star" in tier_label:
+                boss_hp_est = 3600
+            elif "1-Star" in tier_label:
+                boss_hp_est = 600
+            else:
+                boss_hp_est = 15000
+            top6 = cnt[:6]
+            avg_dps = sum(c["dps"] for c in top6) / max(1, len(top6))
+            # PoGO 레이드는 1마리씩 릴레이로 싸우므로 단일 DPS 기준.
+            # 도지/페인트 부담은 무시한 낙관 추정.
+            est_sec = boss_hp_est / max(1, avg_dps)
+            mm, ss = divmod(int(est_sec), 60)
+            time_str = f"{mm}분 {ss}초" if mm else f"{ss}초"
+            top6_names = ", ".join(sid_to_display.get(c["sid"], c["sid"]) for c in top6)
+            raid_lineup_var.set(
+                f"▶ 6마리 라인업 낙관 추정 클리어: 약 {time_str}  "
+                f"(상위 6 평균 DPS {avg_dps:.1f}, 보스 HP ≈ {boss_hp_est:,})\n"
+                f"   추천: {top6_names}"
             )
 
     def _reload_raids():
@@ -2443,6 +2603,11 @@ def run_gui(gm):
         value="• 좌측 포켓몬 선택 시 자동 갱신 · Lv50/15·15·15 가정")
     ttk.Label(dps_tab, textvariable=dps_status_var,
               font=("", 8), foreground="#666").pack(anchor="w", pady=(0, 4))
+    ttk.Label(dps_tab,
+              text="⚠ DPS 절대값은 PvP 소스(pvpoke) 기반이라 PvE 실측보다 보수적 — "
+                   "무브셋 간 상대 순위는 정확함.",
+              font=("", 8), foreground="#a06030"
+              ).pack(anchor="w", pady=(0, 2))
 
     dps_table_frame = ttk.Frame(dps_tab)
     dps_table_frame.pack(fill="both", expand=True)
@@ -2583,9 +2748,12 @@ def run_gui(gm):
     ttk.Label(dmax_tab, textvariable=dmax_status_var,
               font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
 
+    dmax_sid_by_iid = {}  # tree iid → sid (행 더블클릭 시 카운터 탭으로 점프)
+
     def refresh_dynamax():
         for r in dmax_tree.get_children():
             dmax_tree.delete(r)
+        dmax_sid_by_iid.clear()
         cnt = 0
         for sid, gmax in DYNAMAX_POOL:
             p = next((x for x in state["gm"]["pokemon"] if x.get("speciesId") == sid), None)
@@ -2595,19 +2763,44 @@ def run_gui(gm):
             types = [t for t in p.get("types", []) if t and t != "none"]
             type_str = " · ".join(TYPE_KO.get(t, t) for t in types)
             bs = p.get("baseStats", {})
-            # 추천 맥스 무브: 본인 STAB 타입 중 첫 번째
             best_max = "맥스가드 / 맥스스피릿" if not types else \
                        f"맥스{MAX_MOVE_KO.get(types[0], '?')}"
-            dmax_tree.insert("", "end", values=(
+            iid = dmax_tree.insert("", "end", values=(
                 disp, type_str, "★" if gmax else "",
                 bs.get("atk", "—"), bs.get("def", "—"), bs.get("hp", "—"),
                 best_max,
             ))
+            dmax_sid_by_iid[iid] = sid
             cnt += 1
         dmax_status_var.set(
             f"• 총 {cnt}/{len(DYNAMAX_POOL)} 종 표시 · ★ = 거다이맥스(GMax) 폼 존재 · "
-            "데이터: PokeMiners GAME_MASTER 기반 큐레이션"
+            "데이터: PokeMiners GAME_MASTER 기반 큐레이션 · "
+            "행 더블클릭 → PvE 카운터 탭으로 이 종을 보스로 분석"
         )
+
+    def _on_dmax_double(_e=None):
+        sel = dmax_tree.selection()
+        if not sel:
+            return
+        sid = dmax_sid_by_iid.get(sel[0])
+        if not sid:
+            return
+        # 좌측 listbox 에서 해당 sid 찾아 선택 + use_selected 모드 ON + PvE 카운터 탭으로
+        target_disp = sid_to_display.get(sid)
+        if target_disp:
+            for idx in range(listbox.size()):
+                if strip_star(listbox.get(idx)) == target_disp:
+                    listbox.selection_clear(0, tk.END)
+                    listbox.selection_set(idx)
+                    listbox.activate(idx)
+                    listbox.see(idx)
+                    break
+        use_selected_var.set(True)
+        notebook.select(raid_tab)
+        refresh_counters()
+
+    dmax_tree.bind("<Double-Button-1>", _on_dmax_double)
+    dmax_tree.bind("<Return>", _on_dmax_double)
 
     # ===== Actions =====
     last_query = [""]
@@ -2669,6 +2862,8 @@ def run_gui(gm):
         display_to_sid.update(dict(new_entries))
         sid_to_display.clear()
         sid_to_display.update({s: d for d, s in new_entries})
+        for sid, disp in build_sid_display_full(new_gm, new_dex_to_ko).items():
+            sid_to_display.setdefault(sid, disp)
         all_displays_full[:] = sorted(display_to_sid.keys(), key=lambda s: s.lower())
         for lg in LEAGUES:
             rk = load_league_rankings(lg.cup_id, lg.cap)
@@ -2887,6 +3082,7 @@ def run_gui(gm):
 
     def render_type_effectiveness(types):
         clear_type_row()
+        types = [t for t in types if t and t != "none"]
         if not types:
             return
         types_str = " / ".join(TYPE_KO.get(t, t) for t in types)
