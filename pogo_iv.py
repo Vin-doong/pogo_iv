@@ -1847,25 +1847,67 @@ def run_gui(gm):
             return "shadow"
         return "normal"
 
+    # 검색 핫루프용 사전 캐시 — 키 입력마다 norm()/category lookup 재계산 방지.
+    # 데이터 갱신(do_data_refresh) 시 _rebuild_search_cache() 로 다시 채움.
+    search_cache = {
+        "norm_d": {},   # display → norm(display)
+        "norm_s": {},   # display → sid.lower()
+        "cat":    {},   # display → category
+        "len":    {},   # display → len(display)
+    }
+
+    def _rebuild_search_cache():
+        nd, ns, cat, ln = {}, {}, {}, {}
+        for d in all_displays_full:
+            sid = display_to_sid[d]
+            nd[d]  = norm(d)
+            ns[d]  = sid.lower()
+            cat[d] = _category(sid)
+            ln[d]  = len(d)
+        search_cache["norm_d"] = nd
+        search_cache["norm_s"] = ns
+        search_cache["cat"]    = cat
+        search_cache["len"]    = ln
+    _rebuild_search_cache()
+
     def filter_displays(query, only_favs=False,
                         show_normal=True, show_shadow=True, show_mega=True):
         q = norm(query)
-        allowed = set()
-        if show_normal: allowed.add("normal")
-        if show_shadow: allowed.add("shadow")
-        if show_mega:   allowed.add("mega")
-        pool = [d for d in all_displays_full
-                if _category(display_to_sid[d]) in allowed
-                and (not only_favs or display_to_sid[d] in favorites)]
+        c_normal, c_shadow, c_mega = show_normal, show_shadow, show_mega
+        nd_map = search_cache["norm_d"]
+        ns_map = search_cache["norm_s"]
+        cat_map = search_cache["cat"]
+        len_map = search_cache["len"]
+
         if not q:
-            return pool
+            # 무검색 경로: 정렬된 all_displays_full 순서 그대로
+            if c_normal and c_shadow and c_mega and not only_favs:
+                return list(all_displays_full)
+            out = []
+            append = out.append
+            for d in all_displays_full:
+                cat = cat_map[d]
+                if cat == "normal" and not c_normal: continue
+                if cat == "shadow" and not c_shadow: continue
+                if cat == "mega"   and not c_mega:   continue
+                if only_favs and display_to_sid[d] not in favorites: continue
+                append(d)
+            return out
+
+        # 검색 경로: 카테고리/즐겨찾기 + substring 매치를 한 패스에 처리
         scored = []
-        for d in pool:
-            nd = norm(d)
-            ns = display_to_sid[d].lower()
+        append = scored.append
+        for d in all_displays_full:
+            cat = cat_map[d]
+            if cat == "normal" and not c_normal: continue
+            if cat == "shadow" and not c_shadow: continue
+            if cat == "mega"   and not c_mega:   continue
+            if only_favs and display_to_sid[d] not in favorites: continue
+            nd = nd_map[d]
+            ns = ns_map[d]
             if q in nd or q in ns:
                 starts = 0 if (nd.startswith(q) or ns.startswith(q)) else 1
-                scored.append((starts, len(d), d))
+                append((starts, len_map[d], d))
         scored.sort()
         return [d for *_, d in scored]
 
@@ -3147,6 +3189,17 @@ def run_gui(gm):
     last_fav_only = [None]
     last_cat = [(None, None, None)]
 
+    refresh_pending = [None]
+
+    def _schedule_refresh():
+        # 무거운 refresh 를 idle 콜백으로 미룸 → listbox/카운트가 먼저 그려져 즉각 반응처럼 느낌.
+        if refresh_pending[0] is not None:
+            try:
+                root.after_cancel(refresh_pending[0])
+            except Exception:
+                pass
+        refresh_pending[0] = root.after_idle(lambda: (refresh_pending.__setitem__(0, None), refresh()))
+
     def update_listbox(force=False, auto_select=True):
         q = search_entry.get()
         fo = fav_only_var.get()
@@ -3176,10 +3229,14 @@ def run_gui(gm):
         else:
             count_var.set(f"{len(filtered)}종 표시 / 전체 {len(all_displays_full)}종{suffix}")
         if filtered and auto_select:
+            target_sid = display_to_sid.get(filtered[0])
             listbox.selection_clear(0, tk.END)
             listbox.selection_set(0)
             listbox.activate(0)
-            refresh()
+            # 첫 항목이 이미 화면에 그려진 포켓몬과 동일하면 refresh 스킵 (체감 즉각)
+            if ranking_cache.get("_sid") == target_sid:
+                return
+            _schedule_refresh()
 
     def do_data_refresh():
         if not messagebox.askyesno("데이터 업데이트",
@@ -3205,6 +3262,7 @@ def run_gui(gm):
         for sid, disp in build_sid_display_full(new_gm, new_dex_to_ko).items():
             sid_to_display.setdefault(sid, disp)
         all_displays_full[:] = sorted(display_to_sid.keys(), key=lambda s: s.lower())
+        _rebuild_search_cache()
         for lg in LEAGUES:
             rk = load_league_rankings(lg.cup_id, lg.cap)
             rankings[lg.name] = rk
@@ -3220,6 +3278,8 @@ def run_gui(gm):
         move_ko_map.clear()
         move_ko_map.update(load_move_ko_map())
         ranking_cache.clear()
+        _ranking_lru.clear()
+        _ranking_lru_order.clear()
         try:
             raid_state["bosses"] = load_raid_bosses(force=True)
             _populate_boss_combo()
@@ -3268,7 +3328,34 @@ def run_gui(gm):
         else:
             meta_label.set(f"▼ {league_name} 메타 전체 {len(ranking)}종")
 
-    ranking_cache = {}  # sid → {league_name: valid_ranked_list}
+    ranking_cache = {}  # 현재 포켓몬 뷰 (sid + 리그별 결과). refresh 가 사용.
+
+    # LRU: 최근 본 포켓몬 N개 분의 rank_all 결과 보관 — 왔다갔다 시 재계산 방지.
+    # 항목 1개 = 4리그 × ~4096 IV = 16k 튜플 ≈ 0.5MB. 8개면 ~4MB.
+    _ranking_lru = {}        # sid → {league_name: valid_ranked_list}
+    _ranking_lru_order = []  # MRU first
+    RANKING_LRU_MAX = 8
+
+    def _get_ranking_for(sid, base):
+        cached = _ranking_lru.get(sid)
+        if cached is not None:
+            try:
+                _ranking_lru_order.remove(sid)
+            except ValueError:
+                pass
+            _ranking_lru_order.insert(0, sid)
+            return cached
+        max_idx = len(CPM) - 1
+        data = {}
+        for lg in LEAGUES:
+            r = rank_all(base, lg.cap, max_idx)
+            data[lg.name] = [e for e in r if e[2] != -1]
+        _ranking_lru[sid] = data
+        _ranking_lru_order.insert(0, sid)
+        while len(_ranking_lru_order) > RANKING_LRU_MAX:
+            old = _ranking_lru_order.pop()
+            _ranking_lru.pop(old, None)
+        return data
 
     def find_ranking_entry(league_name, sid):
         for e in rankings.get(league_name, []):
@@ -3509,14 +3596,12 @@ def run_gui(gm):
         except ValueError:
             cur_idx = None
 
-        # Compute all 4 leagues once per Pokemon, cache
+        # 같은 포켓몬이면 ranking_cache 그대로. 다르면 LRU 에서 끌어오거나 새로 계산.
         if ranking_cache.get("_sid") != sid:
+            data = _get_ranking_for(sid, base)
             ranking_cache.clear()
             ranking_cache["_sid"] = sid
-            max_idx = len(CPM) - 1
-            for lg in LEAGUES:
-                r = rank_all(base, lg.cap, max_idx)
-                ranking_cache[lg.name] = [e for e in r if e[2] != -1]
+            ranking_cache.update(data)
 
         # Parse user IV — StringVar 비어있으면 None
         def _iv(sv):
@@ -3821,13 +3906,22 @@ def run_gui(gm):
 
     # Bindings
     # IME(한글) 조합 중에는 entry.get()이 비어있어서 실시간 필터링이 어려움.
-    # → Enter 또는 검색 버튼으로 강제 확정. 폴링은 commit 후 반영 백업용.
+    # → Enter 또는 검색 버튼으로 강제 확정. 폴링은 commit 후 반영 백업용 (느슨한 주기).
     def trigger_search():
         update_listbox(force=True)
 
     def poll():
         update_listbox()
-        root.after(150, poll)
+        # IME commit 백업용 폴링 — 700ms 면 한글 조합 끝난 뒤 자연스럽게 반영
+        root.after(700, poll)
+
+    # KeyRelease 디바운스: 한 글자 칠 때 자/모음별로 여러 KeyRelease 가 발생하므로
+    # 마지막 입력 후 180ms 정도 쉬어야 필터링을 한 번만 실행.
+    search_pending = [None]
+    def _on_search_keyrelease(_event=None):
+        if search_pending[0]:
+            root.after_cancel(search_pending[0])
+        search_pending[0] = root.after(180, lambda: update_listbox())
 
     def clear_all():
         search_var.set("")
@@ -3875,7 +3969,7 @@ def run_gui(gm):
 
     search_entry.bind("<Return>", lambda e: trigger_search())
     search_entry.bind("<Escape>", lambda e: clear_all())
-    search_entry.bind("<KeyRelease>", lambda e: root.after(10, update_listbox))
+    search_entry.bind("<KeyRelease>", _on_search_keyrelease)
     search_button.configure(command=trigger_search)
     clear_button.configure(command=clear_all)
 
