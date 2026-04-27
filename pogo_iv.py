@@ -1567,6 +1567,74 @@ def power_up_cost(start_idx, end_idx):
     return (dust, candy, xl)
 
 
+def appraisal_label(ivs):
+    """포켓몬 GO 어필 화면 등급. (별 4단계 + 어필러/100% 마크)"""
+    a, d, h = ivs
+    total = a + d + h
+    if total >= 37:   stars = 4
+    elif total >= 30: stars = 3
+    elif total >= 23: stars = 2
+    else:             stars = 1
+    star_str = "★" * stars + "☆" * (4 - stars)
+    label = f"{star_str} 합 {total}/45"
+    if total == 45:
+        label += " · 100% Hundo"
+    elif all(v >= 13 for v in ivs):
+        label += " · 어필러"
+    elif all(v >= 12 for v in ivs):
+        label += " · 준어필러"
+    return label
+
+
+# 거래(Trading) 시 친구 등급별 IV 최소값 (모든 IV 가 [floor, 15] 범위에서 균등 랜덤)
+TRADE_IV_FLOORS = {
+    "친한친구": 1,
+    "좋은친구": 1,
+    "절친친구": 2,
+    "베스트친구": 5,
+}
+LUCKY_TRADE_FLOOR = 12  # 럭키 포켓몬은 모든 IV ≥ 12
+
+# 거래 비용(별의모래) — 같은 종/같은 폼 일반 포켓몬 기준 근사값
+# (전설/색이 다른/등록 안 된 경우 100배~수만배. 단순 가이드)
+TRADE_DUST_NORMAL = {
+    "친한친구": 1000,
+    "좋은친구": 1000,
+    "절친친구": 800,
+    "베스트친구": 100,
+}
+TRADE_DUST_SPECIAL = {  # 전설/색이 다른/등록 안 된 종
+    "친한친구": 20000,
+    "좋은친구": 16000,
+    "절친친구": 1600,
+    "베스트친구": 800,
+}
+
+
+def trade_iv_distribution(floor):
+    """거래 후 IV 분포: floor~15 균등 랜덤 (모든 스탯 독립).
+    반환: (best_total_prob, average_total, min_total, max_total).
+    - best_total_prob = 100% (15/15/15) 확률 [%]
+    - average_total = 평균 IV 합
+    - hundo_chance = 1 / (16 - floor)^3 (15가 나올 확률 ^3)
+    """
+    span = 16 - floor  # 가능한 정수 개수
+    if span <= 0:
+        return None
+    hundo_p = (1.0 / span) ** 3 * 100
+    avg_each = (floor + 15) / 2.0
+    avg_total = avg_each * 3
+    min_total = floor * 3
+    max_total = 45
+    return {
+        "hundo_pct": hundo_p,
+        "avg_total": avg_total,
+        "min_total": min_total,
+        "max_total": max_total,
+        "span": span,
+    }
+
+
 def type_effectiveness(types):
     """방어 타입 리스트 → {공격타입: 배수} 딕셔너리."""
     result = {}
@@ -1832,6 +1900,11 @@ def run_gui(gm):
 
     # Move data lookup (gamemaster)
     moves_by_id = {m["moveId"]: m for m in gm.get("moves", [])}
+
+    # 기술 ID → 한글명 (여러 refresh 함수에서 공통 사용)
+    def move_ko(mid):
+        k = mid.lower().replace("_", "-")
+        return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
 
     # 즐겨찾기 + 설정
     favorites = load_favorites()
@@ -2654,11 +2727,8 @@ def run_gui(gm):
             disp = sid_to_display.get(c["sid"], c["sid"])
             tps = " · ".join(TYPE_KO.get(t, t) for t in c["pokemon"].get("types", [])
                              if t and t != "none")
-            def _move_ko(mid):
-                k = mid.lower().replace("_", "-")
-                return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
-            f_name = _move_ko(c["fast_id"])
-            ch_name = _move_ko(c["charged_id"])
+            f_name = move_ko(c["fast_id"])
+            ch_name = move_ko(c["charged_id"])
             f_type = TYPE_KO.get(c["fast_type"], c["fast_type"])
             ch_type = TYPE_KO.get(c["charged_type"], c["charged_type"])
             raid_tree.insert("", "end", values=(
@@ -2841,15 +2911,11 @@ def run_gui(gm):
                 rows.append({**r, "fid": fid, "cid": cid})
         rows.sort(key=lambda x: x["edps"], reverse=True)
 
-        def _move_ko(mid):
-            k = mid.lower().replace("_", "-")
-            return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
-
         for i, r in enumerate(rows, 1):
             f = moves_by_id[r["fid"]]
             c = moves_by_id[r["cid"]]
-            f_lbl = f"{_move_ko(r['fid'])} ({TYPE_KO.get(f['type'], f['type'])})"
-            c_lbl = f"{_move_ko(r['cid'])} ({TYPE_KO.get(c['type'], c['type'])})"
+            f_lbl = f"{move_ko(r['fid'])} ({TYPE_KO.get(f['type'], f['type'])})"
+            c_lbl = f"{move_ko(r['cid'])} ({TYPE_KO.get(c['type'], c['type'])})"
             elite_mark = ""
             if r['fid'] in elite_set: f_lbl = "★ " + f_lbl
             if r['cid'] in elite_set: c_lbl = "★ " + c_lbl
@@ -2988,14 +3054,11 @@ def run_gui(gm):
         if not cnt:
             dmax_detail_var.set(f"{disp}: 카운터 계산 결과 없음")
             return
-        def _move_ko(mid):
-            k = mid.lower().replace("_", "-")
-            return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
         lines = [f"▶ {disp} (맥스 배틀 보스 가정) 카운터 TOP 6:"]
         for i, c in enumerate(cnt, 1):
             cd = sid_to_display.get(c["sid"], c["sid"])
-            f_ko = _move_ko(c["fast_id"])
-            ch_ko = _move_ko(c["charged_id"])
+            f_ko = move_ko(c["fast_id"])
+            ch_ko = move_ko(c["charged_id"])
             lines.append(f"  {i}. {cd}  —  {f_ko} + {ch_ko}  (eDPS {c['edps']:.1f})")
         dmax_detail_var.set("\n".join(lines))
 
@@ -3140,15 +3203,12 @@ def run_gui(gm):
             include_legendary=rkt_inc_legend_var.get(),
             attacker_level=atk_lv,
         )
-        def _move_ko(mid):
-            k = mid.lower().replace("_", "-")
-            return move_ko_map.get(k) or moves_by_id.get(mid, {}).get("name", mid)
         for i, c in enumerate(cnt, 1):
             disp = sid_to_display.get(c["sid"], c["sid"])
             tps = " · ".join(TYPE_KO.get(t, t) for t in c["pokemon"].get("types", [])
                              if t and t != "none")
-            f_lbl = f"{_move_ko(c['fast_id'])} ({TYPE_KO.get(c['fast_type'], c['fast_type'])})"
-            c_lbl = f"{_move_ko(c['charged_id'])} ({TYPE_KO.get(c['charged_type'], c['charged_type'])})"
+            f_lbl = f"{move_ko(c['fast_id'])} ({TYPE_KO.get(c['fast_type'], c['fast_type'])})"
+            c_lbl = f"{move_ko(c['charged_id'])} ({TYPE_KO.get(c['charged_type'], c['charged_type'])})"
             rkt_tree.insert("", "end", values=(
                 i, disp, tps, f_lbl, c_lbl,
                 f"{c['edps']:.1f}", f"{c['dps']:.1f}",
@@ -3357,6 +3417,344 @@ def run_gui(gm):
             _ranking_lru.pop(old, None)
         return data
 
+    # ===== Tab: 거래/강화 시뮬레이터 =====
+    trade_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(trade_tab, text="  거래/강화  ")
+
+    ttk.Label(trade_tab,
+              text="거래(트레이드) 후 IV 분포 시뮬레이션 + 강화 비용 계산기",
+              font=("", 9), foreground="#555").pack(anchor="w", pady=(0, 8))
+
+    trade_split = ttk.Frame(trade_tab)
+    trade_split.pack(fill="both", expand=True)
+
+    # ----- 좌: 거래 시뮬레이터 -----
+    trade_left = ttk.LabelFrame(trade_split, text=" 거래 시뮬레이터 ", padding=(10, 10))
+    trade_left.pack(side="left", fill="both", expand=True, padx=(0, 6))
+
+    ttk.Label(trade_left,
+              text="거래 시 모든 IV 가 [최소값, 15] 범위에서 균등 랜덤 재배정됩니다.",
+              font=("", 9), foreground="#666",
+              wraplength=420, justify="left").pack(anchor="w", pady=(0, 8))
+
+    ttk.Label(trade_left, text="친구 등급:", font=("", 10, "bold")).pack(anchor="w", pady=(4, 2))
+    trade_friendship_var = tk.StringVar(value="베스트친구")
+    trade_friendship_row = ttk.Frame(trade_left)
+    trade_friendship_row.pack(anchor="w", pady=(0, 6))
+    for fs in ("친한친구", "좋은친구", "절친친구", "베스트친구"):
+        ttk.Radiobutton(trade_friendship_row, text=fs, value=fs,
+                        variable=trade_friendship_var,
+                        command=lambda: refresh_trade()).pack(side="left", padx=(0, 4))
+
+    trade_opts_row = ttk.Frame(trade_left)
+    trade_opts_row.pack(anchor="w", pady=(0, 6))
+    trade_lucky_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(trade_opts_row, text="럭키 거래 (모든 IV ≥ 12 보장)",
+                    variable=trade_lucky_var,
+                    command=lambda: refresh_trade()).pack(side="left", padx=(0, 12))
+    trade_special_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(trade_opts_row, text="특별 거래 (전설/색이 다른/미등록)",
+                    variable=trade_special_var,
+                    command=lambda: refresh_trade()).pack(side="left")
+
+    ttk.Separator(trade_left, orient="horizontal").pack(fill="x", pady=(8, 8))
+    trade_result_var = tk.StringVar(value="")
+    ttk.Label(trade_left, textvariable=trade_result_var,
+              font=("", 10), justify="left", foreground="#222",
+              wraplength=420).pack(anchor="w", fill="x")
+
+    ttk.Separator(trade_left, orient="horizontal").pack(fill="x", pady=(10, 8))
+    ttk.Label(trade_left, text="▼ 선택 포켓몬 분석 (좌측 리스트에서 선택)",
+              font=("", 9, "bold"), foreground="#444").pack(anchor="w")
+    trade_target_var = tk.StringVar(value="(미선택)")
+    ttk.Label(trade_left, textvariable=trade_target_var,
+              font=("", 10, "bold"), foreground="#c33").pack(anchor="w", pady=(2, 2))
+    trade_target_detail = tk.StringVar(value="좌측 포켓몬을 선택하면 리그 1등 IV 가능 여부를 분석합니다.")
+    ttk.Label(trade_left, textvariable=trade_target_detail,
+              font=("", 9), justify="left",
+              wraplength=420).pack(anchor="w", fill="x", pady=(2, 0))
+
+    def refresh_trade():
+        floor = LUCKY_TRADE_FLOOR if trade_lucky_var.get() \
+                else TRADE_IV_FLOORS[trade_friendship_var.get()]
+        dust_table = TRADE_DUST_SPECIAL if trade_special_var.get() else TRADE_DUST_NORMAL
+        dust = dust_table[trade_friendship_var.get()]
+        dist = trade_iv_distribution(floor)
+        if not dist:
+            trade_result_var.set("(불가)")
+            return
+        lines = [
+            f"• 거래 후 각 IV: {floor}~15 균등 랜덤 (총 {dist['span']**3:,} 조합)",
+            f"• 평균 IV 합: {dist['avg_total']:.1f}/45  (범위 {dist['min_total']}~{dist['max_total']})",
+            f"• 100% (15/15/15) 확률: {dist['hundo_pct']:.4f}%   (1 / {dist['span']**3:,})",
+            f"• 거래 비용: 별의모래 {dust:,}  ({'특별' if trade_special_var.get() else '일반'} · {trade_friendship_var.get()})",
+        ]
+        trade_result_var.set("\n".join(lines))
+        sel = listbox.curselection()
+        if not sel:
+            trade_target_var.set("(미선택)")
+            trade_target_detail.set("좌측 포켓몬을 선택하면 리그 1등 IV 가능 여부를 분석합니다.")
+            return
+        disp = strip_star(listbox.get(sel[0]))
+        sid = display_to_sid.get(disp)
+        pokemon = next((p for p in state["gm"]["pokemon"] if p.get("speciesId") == sid), None)
+        if not pokemon:
+            trade_target_var.set("(매칭 실패)")
+            trade_target_detail.set("")
+            return
+        trade_target_var.set(f"📌 {disp}")
+        if ranking_cache.get("_sid") != sid:
+            data = _get_ranking_for(sid, pokemon["baseStats"])
+            ranking_cache.clear()
+            ranking_cache["_sid"] = sid
+            ranking_cache.update(data)
+        details = []
+        for lg in LEAGUES:
+            valid = ranking_cache.get(lg.name, [])
+            if not valid:
+                continue
+            top_iv = valid[0][0]
+            ok = all(v >= floor for v in top_iv)
+            mark = "✅" if ok else "❌"
+            iv_str = f"{top_iv[0]}/{top_iv[1]}/{top_iv[2]}"
+            note = "거래로 가능" if ok else f"불가 — 최소 {floor} 미만"
+            details.append(f"{mark} {lg.name} 1등 IV {iv_str}  ({note})")
+        trade_target_detail.set("\n".join(details) if details else "리그 데이터 없음")
+
+    # ----- 우: 강화 비용 시뮬레이터 -----
+    pwr_right = ttk.LabelFrame(trade_split, text=" 강화 비용 시뮬레이터 ", padding=(10, 10))
+    pwr_right.pack(side="left", fill="both", expand=True, padx=(6, 0))
+
+    ttk.Label(pwr_right,
+              text="현재 레벨 → 목표 레벨까지 필요한 별의모래 / 사탕 / XL사탕 합산",
+              font=("", 9), foreground="#666",
+              wraplength=420, justify="left").pack(anchor="w", pady=(0, 8))
+
+    pwr_input_row = ttk.Frame(pwr_right)
+    pwr_input_row.pack(anchor="w", pady=(4, 6))
+    ttk.Label(pwr_input_row, text="현재 Lv:").pack(side="left", padx=(0, 4))
+    pwr_from_var = tk.StringVar(value="20")
+    ttk.Spinbox(pwr_input_row, from_=1.0, to=51.0, increment=0.5,
+                textvariable=pwr_from_var, width=6,
+                command=lambda: refresh_power()).pack(side="left", padx=(0, 12))
+    ttk.Label(pwr_input_row, text="목표 Lv:").pack(side="left", padx=(0, 4))
+    pwr_to_var = tk.StringVar(value="40")
+    ttk.Spinbox(pwr_input_row, from_=1.0, to=51.0, increment=0.5,
+                textvariable=pwr_to_var, width=6,
+                command=lambda: refresh_power()).pack(side="left", padx=(0, 12))
+
+    pwr_buddy_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(pwr_right, text="베스트버디 보너스 (전투 시 +1 Lv 효과 — 강화 비용엔 영향 없음)",
+                    variable=pwr_buddy_var,
+                    command=lambda: refresh_power()).pack(anchor="w", pady=(2, 0))
+
+    ttk.Separator(pwr_right, orient="horizontal").pack(fill="x", pady=(8, 8))
+    pwr_result_var = tk.StringVar(value="")
+    ttk.Label(pwr_right, textvariable=pwr_result_var,
+              font=("", 10), justify="left",
+              wraplength=420).pack(anchor="w", fill="x")
+
+    # 자주 쓰는 빠른 버튼
+    pwr_quick_row = ttk.Frame(pwr_right)
+    pwr_quick_row.pack(anchor="w", pady=(8, 0))
+    ttk.Label(pwr_quick_row, text="빠른 설정:",
+              font=("", 9), foreground="#666").pack(side="left", padx=(0, 4))
+    def _quick_set(f, t):
+        pwr_from_var.set(str(f))
+        pwr_to_var.set(str(t))
+        refresh_power()
+    for label, f, t in [("→ Lv40", 20, 40), ("→ Lv45", 30, 45), ("→ Lv50", 40, 50)]:
+        ttk.Button(pwr_quick_row, text=label, width=8,
+                   command=lambda ff=f, tt=t: _quick_set(ff, tt)).pack(side="left", padx=2)
+
+    def refresh_power():
+        try:
+            f_lv = float(pwr_from_var.get())
+            t_lv = float(pwr_to_var.get())
+        except ValueError:
+            pwr_result_var.set("⚠ 레벨 입력 오류")
+            return
+        if t_lv <= f_lv:
+            pwr_result_var.set("⚠ 목표 레벨이 현재 레벨보다 커야 합니다.")
+            return
+        f_idx = idx_from_level(f_lv)
+        t_idx = idx_from_level(t_lv)
+        dust, candy, xl = power_up_cost(f_idx, t_idx)
+        n_steps = t_idx - f_idx
+        lines = [
+            f"• Lv{f_lv:g} → Lv{t_lv:g}  ({n_steps}회 강화)",
+            f"• 별의모래: {dust:,}",
+            f"• 일반 사탕: {candy:,}",
+        ]
+        if xl > 0:
+            lines.append(f"• XL 사탕: {xl:,}  (Lv40 초과 구간)")
+        pwr_result_var.set("\n".join(lines))
+
+    # ===== Tab: PvP 팀 빌더 =====
+    team_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(team_tab, text="  PvP 팀빌더  ")
+
+    ttk.Label(team_tab,
+              text="3마리 라인업 시너지 분석 — 타입 커버리지, 약점 중첩 경고, 메타 순위",
+              font=("", 9), foreground="#555").pack(anchor="w", pady=(0, 8))
+
+    # 슬롯 3개 (라인업)
+    team_slots = [None, None, None]  # sid 보관
+    team_slot_vars = [tk.StringVar(value="(미선택)") for _ in range(3)]
+    team_meta_vars = [tk.StringVar(value="") for _ in range(3)]
+
+    team_top_row = ttk.Frame(team_tab)
+    team_top_row.pack(fill="x", pady=(0, 8))
+
+    for i in range(3):
+        slot_box = ttk.LabelFrame(team_top_row, text=f" 슬롯 {i+1} ", padding=(6, 6))
+        slot_box.pack(side="left", fill="both", expand=True, padx=(0, 6) if i < 2 else (0, 0))
+        ttk.Label(slot_box, textvariable=team_slot_vars[i],
+                  font=("", 10, "bold"), foreground="#c33").pack(anchor="w")
+        ttk.Label(slot_box, textvariable=team_meta_vars[i],
+                  font=("", 9), foreground="#666",
+                  justify="left", wraplength=220).pack(anchor="w", pady=(2, 4))
+        btns = ttk.Frame(slot_box)
+        btns.pack(anchor="w")
+        ttk.Button(btns, text="좌측 선택 → 슬롯",
+                   command=lambda idx=i: assign_team_slot(idx)).pack(side="left", padx=(0, 4))
+        ttk.Button(btns, text="비우기",
+                   command=lambda idx=i: clear_team_slot(idx)).pack(side="left")
+
+    # 분석 결과
+    team_result_frame = ttk.Frame(team_tab)
+    team_result_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+    ttk.Label(team_result_frame, text="▼ 팀 시너지 분석",
+              font=("", 10, "bold"), foreground="#333").pack(anchor="w")
+    team_summary_var = tk.StringVar(value="3개 슬롯 모두 채우면 분석이 표시됩니다.")
+    ttk.Label(team_result_frame, textvariable=team_summary_var,
+              font=("", 9), justify="left", wraplength=920,
+              foreground="#222").pack(anchor="w", fill="x", pady=(4, 6))
+
+    # 약점 매트릭스 트리뷰 (공격 타입 17개 컬럼)
+    team_matrix_frame = ttk.Frame(team_result_frame)
+    team_matrix_frame.pack(fill="both", expand=True)
+
+    matrix_cols = ("slot",) + tuple(f"t{i}" for i in range(len(TYPES_ORDER)))
+    matrix_labels = ("포켓몬",) + tuple(TYPE_KO.get(t, t) for t in TYPES_ORDER)
+    team_matrix = ttk.Treeview(team_matrix_frame, columns=matrix_cols,
+                               show="headings", height=4, selectmode="none")
+    for c, l in zip(matrix_cols, matrix_labels):
+        team_matrix.heading(c, text=l)
+        team_matrix.column(c, width=72 if c == "slot" else 48, anchor="center")
+    team_matrix.pack(fill="x")
+    team_matrix.tag_configure("double_weak",  background="#ffd0d0")  # 2.56× 중첩 약점
+    team_matrix.tag_configure("weak",         background="#ffe8d0")  # 1.6× 약점
+    team_matrix.tag_configure("resist",       background="#e0f0ff")  # 0.625×
+    team_matrix.tag_configure("double_resist", background="#d0f0d0")  # 0.39× 이하
+
+    def assign_team_slot(idx):
+        sel = listbox.curselection()
+        if not sel:
+            team_summary_var.set("⚠ 좌측 리스트에서 포켓몬을 먼저 선택하세요.")
+            return
+        disp = strip_star(listbox.get(sel[0]))
+        sid = display_to_sid.get(disp)
+        if not sid:
+            return
+        team_slots[idx] = sid
+        team_slot_vars[idx].set(f"📌 {disp}")
+        # 메타 순위 + 타입 표시
+        pokemon = next((p for p in state["gm"]["pokemon"] if p.get("speciesId") == sid), None)
+        if pokemon:
+            types = [t for t in pokemon.get("types", []) if t and t != "none"]
+            type_str = " · ".join(TYPE_KO.get(t, t) for t in types)
+            ranks = []
+            for lg in LEAGUES:
+                rk = rankings_index.get(lg.name, {}).get(sid)
+                if rk:
+                    ranks.append(f"{lg.name} #{rk}")
+            meta = "타입: " + type_str
+            if ranks:
+                meta += "\n" + "  ·  ".join(ranks[:3])
+            team_meta_vars[idx].set(meta)
+        refresh_team_analysis()
+
+    def clear_team_slot(idx):
+        team_slots[idx] = None
+        team_slot_vars[idx].set("(미선택)")
+        team_meta_vars[idx].set("")
+        refresh_team_analysis()
+
+    def refresh_team_analysis():
+        for r in team_matrix.get_children():
+            team_matrix.delete(r)
+        active_sids = [s for s in team_slots if s]
+        if not active_sids:
+            team_summary_var.set("3개 슬롯 모두 채우면 분석이 표시됩니다.")
+            return
+
+        # 각 포켓몬의 약점/내성 매트릭스 + 팀 전체 합산
+        team_threat_count = {t: 0 for t in TYPES_ORDER}  # 1.6× 이상 약점인 포켓몬 수
+        team_double_threat = {t: 0 for t in TYPES_ORDER}  # 2.56× 중첩 약점인 포켓몬 수
+        team_resist_count = {t: 0 for t in TYPES_ORDER}   # 0.625× 이하 저항인 포켓몬 수
+
+        for slot_idx, sid in enumerate(team_slots):
+            if not sid:
+                continue
+            pokemon = next((p for p in state["gm"]["pokemon"] if p.get("speciesId") == sid), None)
+            if not pokemon:
+                continue
+            disp = sid_to_display.get(sid, sid)
+            types = [t for t in pokemon.get("types", []) if t and t != "none"]
+            eff = type_effectiveness(types)
+            row_values = [disp]
+            for atk in TYPES_ORDER:
+                m = eff.get(atk, 1.0)
+                if m > 1.6:
+                    cell = "2.56×"
+                    team_threat_count[atk] += 1
+                    team_double_threat[atk] += 1
+                elif m > 1.0:
+                    cell = "1.6×"
+                    team_threat_count[atk] += 1
+                elif m < 0.5:
+                    cell = "0.39×"
+                    team_resist_count[atk] += 1
+                elif m < 1.0:
+                    cell = "0.625×"
+                    team_resist_count[atk] += 1
+                else:
+                    cell = "—"
+                row_values.append(cell)
+            team_matrix.insert("", "end", values=tuple(row_values))
+
+        # 합산 행
+        total_row = ["▼ 합산 (위협↑/저항↓)"]
+        for atk in TYPES_ORDER:
+            t = team_threat_count[atk]
+            r = team_resist_count[atk]
+            total_row.append(f"+{t}/-{r}")
+        team_matrix.insert("", "end", values=tuple(total_row), tags=())
+
+        # 위험 분석 텍스트
+        critical = [TYPE_KO.get(t, t) for t in TYPES_ORDER if team_double_threat[t] >= 2]
+        full_swept = [TYPE_KO.get(t, t) for t in TYPES_ORDER if team_threat_count[t] == len(active_sids)]
+        no_resist = [TYPE_KO.get(t, t) for t in TYPES_ORDER
+                     if team_threat_count[t] >= 1 and team_resist_count[t] == 0]
+        good_cover = [TYPE_KO.get(t, t) for t in TYPES_ORDER if team_resist_count[t] >= 2]
+
+        lines = []
+        if len(active_sids) < 3:
+            lines.append(f"⚠ 슬롯 {len(active_sids)}/3 채워짐 — 나머지 채우면 더 정확한 분석.")
+        if full_swept:
+            lines.append(f"🚨 팀 전체 약점: {', '.join(full_swept)}  (3마리 모두 1.6× 이상)")
+        if critical:
+            lines.append(f"⚠ 2.56× 중첩 약점이 2마리 이상: {', '.join(critical)}")
+        if no_resist:
+            lines.append(f"⚠ 약점만 있고 저항 없음: {', '.join(no_resist)}")
+        if good_cover:
+            lines.append(f"✅ 든든한 저항 (2마리 이상): {', '.join(good_cover)}")
+        if not lines:
+            lines.append("✅ 균형 좋음 — 일방적 약점 없음.")
+        team_summary_var.set("\n".join(lines))
+
     def find_ranking_entry(league_name, sid):
         for e in rankings.get(league_name, []):
             if e.get("speciesId") == sid:
@@ -3483,6 +3881,24 @@ def run_gui(gm):
             ttk.Label(evo_frame, text="(단일종 · 진화 없음)",
                       font=("", 9), foreground="#999").pack(side="left")
             return
+
+        # 진화 후 CP 미리보기: IV + 현재 Lv 모두 입력되어야 표시
+        user_ivs_lv = None
+        try:
+            a_s, d_s, h_s = atk_var.get().strip(), def_var.get().strip(), hp_var.get().strip()
+            lv_s = cur_lv_var.get().strip()
+            if a_s and d_s and h_s and lv_s:
+                ivs = (int(a_s), int(d_s), int(h_s))
+                lv = float(lv_s)
+                if all(0 <= v <= 15 for v in ivs) and 1.0 <= lv <= 51.0:
+                    cur_idx = idx_from_level(lv)
+                    if 0 <= cur_idx < len(CPM):
+                        user_ivs_lv = (ivs, CPM[cur_idx])
+        except (ValueError, TypeError):
+            user_ivs_lv = None
+
+        pokemon_by_sid = {p.get("speciesId"): p for p in state["gm"].get("pokemon", [])}
+
         for i, stage in enumerate(stages):
             if i > 0:
                 ttk.Label(evo_frame, text="→", font=("", 11),
@@ -3492,12 +3908,20 @@ def run_gui(gm):
                     ttk.Label(evo_frame, text="/", font=("", 10),
                               foreground="#aaa").pack(side="left", padx=2)
                 disp = sid_to_display.get(s, s)
+                cp_suffix = ""
+                if user_ivs_lv:
+                    p = pokemon_by_sid.get(s)
+                    if p and p.get("baseStats"):
+                        ivs, cpm = user_ivs_lv
+                        cp = compute_cp(p["baseStats"], ivs, cpm)
+                        cp_suffix = f" (CP{cp})"
+                text = disp + cp_suffix
                 is_current = (s == current_sid)
                 if is_current:
-                    ttk.Label(evo_frame, text=disp,
+                    ttk.Label(evo_frame, text=text,
                               font=("", 10, "bold"), foreground="#c33").pack(side="left")
                 else:
-                    lbl = tk.Label(evo_frame, text=disp,
+                    lbl = tk.Label(evo_frame, text=text,
                                    font=("TkDefaultFont", 10, "underline"),
                                    fg="#0066cc", cursor="hand2")
                     lbl.pack(side="left")
@@ -3717,15 +4141,17 @@ def run_gui(gm):
         cm = metrics.get(current_league)
         if user_iv is None:
             my_iv_result.set("· 입력하면 리그별 내 순위가 계산됩니다")
-        elif cm and cm["user_entry"]:
-            _, sp, lvl_idx, cp = cm["user_entry"]
-            pct = sp / cm["top_sp"] * 100
-            lvl = level_from_idx(lvl_idx)
-            my_iv_result.set(
-                f"· 선택리그({current_league}) → #{cm['user_rank']}/4096  Lv{lvl:g}  CP{cp}  {pct:.2f}%"
-            )
         else:
-            my_iv_result.set(f"· 선택리그({current_league})에는 못 들어감")
+            ap = appraisal_label(user_iv)
+            if cm and cm["user_entry"]:
+                _, sp, lvl_idx, cp = cm["user_entry"]
+                pct = sp / cm["top_sp"] * 100
+                lvl = level_from_idx(lvl_idx)
+                my_iv_result.set(
+                    f"· {ap}  ·  {current_league} #{cm['user_rank']}/4096  Lv{lvl:g}  CP{cp}  {pct:.2f}%"
+                )
+            else:
+                my_iv_result.set(f"· {ap}  ·  {current_league}에는 못 들어감")
 
         # Top 100 detail table for current league
         for r in tree.get_children():
@@ -4071,6 +4497,11 @@ def run_gui(gm):
                 refresh_dynamax()
             elif tab == "PvE 로켓":
                 refresh_rocket()
+            elif tab == "거래/강화":
+                refresh_trade()
+                refresh_power()
+            elif tab == "PvP 팀빌더":
+                refresh_team_analysis()
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
