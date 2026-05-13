@@ -3779,9 +3779,10 @@ def run_gui(gm):
             _ranking_lru.pop(old, None)
         return data
 
-    # ===== Tab: 팀 메타 (PvPoke training/teams 데이터) =====
+    # ===== Tab: PvP 팀 메타 (PvPoke training/teams 데이터) =====
+    # notebook.add 로 끝에 추가 후, 아래에서 notebook.insert 로 PvP 그룹으로 이동
     team_meta_tab = ttk.Frame(notebook, padding=(8, 8))
-    notebook.add(team_meta_tab, text="  팀 메타  ")
+    notebook.add(team_meta_tab, text="  PvP 팀 메타  ")
 
     ttk.Label(team_meta_tab,
               text="PvPoke 메타 팀 — 8개 역할 슬롯과 각 역할의 추천 포켓몬·무브셋. "
@@ -5270,6 +5271,13 @@ def run_gui(gm):
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
+
+    # 탭 순서 재배치: PvP 팀 메타를 PvP 그룹(PvP CP→IV 뒤, idx=4)으로 이동.
+    # 다른 탭은 add 순서 그대로. insert 는 같은 widget 이면 자동 이동.
+    try:
+        notebook.insert(4, team_meta_tab)
+    except Exception:
+        pass
 
     # 검색창에서 ↓/↑/Enter → 리스트박스 네비게이션
     def _search_arrow(direction):
