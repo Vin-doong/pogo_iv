@@ -3961,6 +3961,29 @@ def run_gui(gm):
         except Exception:
             return iso_str[:16]
 
+    _sort_state = {}  # tree id → (col, descending)
+
+    def _sort_tree(tree, col):
+        """heading 클릭 시 컬럼 정렬 (숫자/날짜/문자열 자동 판단)."""
+        key = id(tree)
+        prev_col, prev_desc = _sort_state.get(key, (None, False))
+        desc = (col == prev_col) and (not prev_desc)
+        _sort_state[key] = (col, desc)
+        items = [(tree.set(iid, col), iid) for iid in tree.get_children("")]
+        def _key(pair):
+            v = pair[0]
+            # 'min~max' CP 범위 → max 기준
+            if "~" in v:
+                tail = v.split("~")[-1]
+                try: return (0, float(tail))
+                except ValueError: pass
+            try: return (0, float(v))
+            except ValueError: pass
+            return (1, v.lower())
+        items.sort(key=_key, reverse=desc)
+        for idx, (_, iid) in enumerate(items):
+            tree.move(iid, "", idx)
+
     def _jump_to_pokemon_by_en(en_name):
         """영어 이름의 포켓몬을 좌측 리스트박스에서 선택 + PvP 분석 탭으로 이동."""
         p = find_boss_pokemon(en_name, state["gm"])
@@ -3995,15 +4018,22 @@ def run_gui(gm):
               font=("", 8), foreground="#a00",
               justify="left", wraplength=1000).pack(anchor="w", pady=(0, 4))
 
-    raid_sched_tree = ttk.Treeview(raid_sched_tab,
+    raid_sched_frame = ttk.Frame(raid_sched_tab)
+    raid_sched_frame.pack(fill="both", expand=True)
+    raid_sched_scroll = ttk.Scrollbar(raid_sched_frame, orient="vertical")
+    raid_sched_scroll.pack(side="right", fill="y")
+    raid_sched_tree = ttk.Treeview(raid_sched_frame,
                                    columns=("tier", "name", "types", "cp", "shiny"),
-                                   show="headings", height=22, selectmode="browse")
+                                   show="headings", height=22, selectmode="browse",
+                                   yscrollcommand=raid_sched_scroll.set)
     for c, h, w in [("tier", "티어", 90), ("name", "포켓몬", 240),
                     ("types", "타입", 140), ("cp", "CP 범위", 120),
                     ("shiny", "색이다른", 70)]:
-        raid_sched_tree.heading(c, text=h)
+        raid_sched_tree.heading(c, text=h,
+                                command=lambda col=c: _sort_tree(raid_sched_tree, col))
         raid_sched_tree.column(c, width=w, anchor="w" if c == "name" else "center")
-    raid_sched_tree.pack(fill="both", expand=True)
+    raid_sched_tree.pack(side="left", fill="both", expand=True)
+    raid_sched_scroll.config(command=raid_sched_tree.yview)
     raid_sched_tree.tag_configure("legendary", background="#fff4e0")
     raid_sched_tree.tag_configure("mega",      background="#f0e0ff")
     raid_sched_tree.tag_configure("shadow",    background="#e0e0e0")
@@ -4090,14 +4120,21 @@ def run_gui(gm):
     ttk.Button(ev_top, text="갱신", width=8,
                command=lambda: _reload_events()).pack(side="right")
 
-    ev_tree = ttk.Treeview(events_tab,
+    ev_frame = ttk.Frame(events_tab)
+    ev_frame.pack(fill="both", expand=True)
+    ev_scroll = ttk.Scrollbar(ev_frame, orient="vertical")
+    ev_scroll.pack(side="right", fill="y")
+    ev_tree = ttk.Treeview(ev_frame,
                            columns=("start", "end", "type", "name"),
-                           show="headings", height=22, selectmode="browse")
+                           show="headings", height=22, selectmode="browse",
+                           yscrollcommand=ev_scroll.set)
     for c, h, w in [("start", "시작", 110), ("end", "종료", 110),
                     ("type", "종류", 130), ("name", "이벤트", 540)]:
-        ev_tree.heading(c, text=h)
+        ev_tree.heading(c, text=h,
+                        command=lambda col=c: _sort_tree(ev_tree, col))
         ev_tree.column(c, width=w, anchor="w" if c == "name" else "center")
-    ev_tree.pack(fill="both", expand=True)
+    ev_tree.pack(side="left", fill="both", expand=True)
+    ev_scroll.config(command=ev_tree.yview)
     ev_tree.tag_configure("active",  background="#e0ffe0")
     ev_tree.tag_configure("soon",    background="#fffadf")
     ev_tree.tag_configure("past",    foreground="#999")
@@ -4270,15 +4307,22 @@ def run_gui(gm):
     ttk.Button(eg_top, text="갱신", width=8,
                command=lambda: _reload_eggs()).pack(side="right")
 
-    eg_tree = ttk.Treeview(eggs_tab,
+    eg_frame = ttk.Frame(eggs_tab)
+    eg_frame.pack(fill="both", expand=True)
+    eg_scroll = ttk.Scrollbar(eg_frame, orient="vertical")
+    eg_scroll.pack(side="right", fill="y")
+    eg_tree = ttk.Treeview(eg_frame,
                            columns=("dist", "name", "cp", "shiny", "flags"),
-                           show="headings", height=22, selectmode="browse")
+                           show="headings", height=22, selectmode="browse",
+                           yscrollcommand=eg_scroll.set)
     for c, h, w in [("dist", "거리", 80), ("name", "포켓몬", 280),
                     ("cp", "CP 범위", 120), ("shiny", "색이다른", 80),
                     ("flags", "특이사항", 240)]:
-        eg_tree.heading(c, text=h)
+        eg_tree.heading(c, text=h,
+                        command=lambda col=c: _sort_tree(eg_tree, col))
         eg_tree.column(c, width=w, anchor="w" if c in ("name", "flags") else "center")
-    eg_tree.pack(fill="both", expand=True)
+    eg_tree.pack(side="left", fill="both", expand=True)
+    eg_scroll.config(command=eg_tree.yview)
     eg_tree.tag_configure("adv",     background="#e8e8ff")  # 모험 모드
     eg_tree.tag_configure("gift",    background="#fff0f0")  # 선물
     eg_tree.tag_configure("regional", background="#fff8d0")  # 지역한정
@@ -4315,13 +4359,17 @@ def run_gui(gm):
             cp_str = f"{cp.get('min', '-')}~{cp.get('max', '-')}"
             shiny = "○" if egg.get("canBeShiny") else ""
             flags = []
-            tag = ""
             if egg.get("isAdventureSync"):
-                flags.append("모험 모드"); tag = "adv"
+                flags.append("모험 모드")
             if egg.get("isGiftExchange"):
-                flags.append("선물 알"); tag = "gift"
+                flags.append("선물 알")
             if egg.get("isRegional"):
-                flags.append("지역 한정"); tag = "regional"
+                flags.append("지역 한정")
+            # 색상 우선순위: 지역한정 > 선물 > 모험
+            if egg.get("isRegional"):    tag = "regional"
+            elif egg.get("isGiftExchange"): tag = "gift"
+            elif egg.get("isAdventureSync"): tag = "adv"
+            else:                          tag = ""
             eg_tree.insert("", "end",
                            values=(egg.get("eggType", ""), ko, cp_str, shiny,
                                    " · ".join(flags)),
@@ -4368,16 +4416,23 @@ def run_gui(gm):
                     variable=rs_show_en_var,
                     command=lambda: _populate_research()).pack(side="left", padx=(8, 4))
 
-    rs_tree = ttk.Treeview(research_tab,
+    rs_frame = ttk.Frame(research_tab)
+    rs_frame.pack(fill="both", expand=True)
+    rs_scroll = ttk.Scrollbar(rs_frame, orient="vertical")
+    rs_scroll.pack(side="right", fill="y")
+    rs_tree = ttk.Treeview(rs_frame,
                            columns=("task", "task_en", "reward", "cp", "shiny"),
-                           show="headings", height=22, selectmode="browse")
+                           show="headings", height=22, selectmode="browse",
+                           yscrollcommand=rs_scroll.set)
     for c, h, w in [("task", "태스크 (한글)", 320), ("task_en", "원문 (영문)", 260),
                     ("reward", "보상 포켓몬", 220), ("cp", "CP 범위", 110),
                     ("shiny", "색이다른", 70)]:
-        rs_tree.heading(c, text=h)
+        rs_tree.heading(c, text=h,
+                        command=lambda col=c: _sort_tree(rs_tree, col))
         rs_tree.column(c, width=w,
                        anchor="w" if c in ("task", "task_en", "reward") else "center")
-    rs_tree.pack(fill="both", expand=True)
+    rs_tree.pack(side="left", fill="both", expand=True)
+    rs_scroll.config(command=rs_tree.yview)
     rs_tree.tag_configure("untranslated", foreground="#888")
 
     def _toggle_en_col(*_):
