@@ -1967,6 +1967,36 @@ def appraisal_label(ivs):
 
 
 # 거래(Trading) 시 친구 등급별 IV 최소값 (모든 IV 가 [floor, 15] 범위에서 균등 랜덤)
+# PvPoke training/teams 의 slot / synergies 영문 → 한글 매핑
+TM_LABEL_KO = {
+    # 타입 (PvPoke 표기는 첫글자 대문자)
+    "Normal": "노말", "Fire": "불꽃", "Water": "물", "Electric": "전기",
+    "Grass": "풀", "Ice": "얼음", "Fighting": "격투", "Poison": "독",
+    "Ground": "땅", "Flying": "비행", "Psychic": "에스퍼", "Bug": "벌레",
+    "Rock": "바위", "Ghost": "고스트", "Dragon": "드래곤", "Dark": "악",
+    "Steel": "강철", "Fairy": "페어리",
+    # 역할 키워드
+    "Tank": "탱커", "Flex": "자유 슬롯",
+    "Charm": "차밍 페어리", "Mudboi": "땅 어태커",
+    # 자주 등장하는 포켓몬 이름 (슬롯 단위 메타)
+    "Azumarill": "마릴리", "Giratina": "기라티나",
+    "Dialga": "디아루가", "Registeel": "레지스틸",
+    "Medicham": "요가램", "Skarmory": "강철톤",
+    "Trevenant": "달뜨기", "Lickitung": "내룸벨트",
+    "Sableye": "안주",
+}
+
+
+def tm_label_ko(s):
+    """팀 메타 slot/synergy 한 토큰 → 한글. Anti-X 패턴도 처리."""
+    if not s:
+        return s
+    if s.startswith("Anti-"):
+        rest = s[5:]
+        return f"대 {TM_LABEL_KO.get(rest, rest)}"
+    return TM_LABEL_KO.get(s, s)
+
+
 def type_effectiveness(types):
     """방어 타입 리스트 → {공격타입: 배수} 딕셔너리."""
     result = {}
@@ -3820,13 +3850,19 @@ def run_gui(gm):
             return
         # PvPoke gamemaster 의 speciesId → 한글 display
         for idx, slot in enumerate(slots, start=1):
-            role = slot.get("slot", "?")
+            role_en = slot.get("slot", "?")
+            role = tm_label_ko(role_en)
+            # 영문이 매칭 안 됐으면 원문 병기, 매칭됐으면 한글만
+            if role != role_en:
+                role_disp = f"{role} ({role_en})"
+            else:
+                role_disp = role
             synergies = slot.get("synergies", []) or []
-            syn_str = ", ".join(synergies[:3])
+            syn_str = ", ".join(tm_label_ko(s) for s in synergies[:3])
             poks = slot.get("pokemon", []) or []
             # 슬롯 헤더 행
             tm_tree.insert("", "end",
-                           values=(f"#{idx}", role, syn_str,
+                           values=(f"#{idx}", role_disp, syn_str,
                                    f"({len(poks)}종 후보)", "", "", ""),
                            tags=("slot_head",),
                            text="")
@@ -4338,8 +4374,9 @@ def run_gui(gm):
             elif egg.get("isGiftExchange"): tag = "gift"
             elif egg.get("isAdventureSync"): tag = "adv"
             else:                          tag = ""
+            dist_disp = (egg.get("eggType", "") or "").replace(" km", "km")
             eg_tree.insert("", "end",
-                           values=(egg.get("eggType", ""), ko, cp_str, shiny,
+                           values=(dist_disp, ko, cp_str, shiny,
                                    " · ".join(flags)),
                            tags=(tag,) if tag else (),
                            text=en)
