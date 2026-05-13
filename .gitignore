@@ -5,6 +5,9 @@ korean_names.csv
 moves.csv
 move_names.csv
 raids.json
+events.json
+eggs.json
+research.json
 sprites/
 
 # 유저 로컬 상태

@@ -35,6 +35,9 @@ MOVE_NAMES_CSV_URL = "https://raw.githubusercontent.com/PokeAPI/pokeapi/master/d
 RANKINGS_URL_TEMPLATE = "https://raw.githubusercontent.com/pvpoke/pvpoke/master/src/data/rankings/{cup_id}/overall/rankings-{cap}.json"
 SPRITE_URL_BASE = "https://play.pokemonshowdown.com/sprites/gen5"
 SCRAPEDUCK_RAIDS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/raids.json"
+SCRAPEDUCK_EVENTS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/events.json"
+SCRAPEDUCK_EGGS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/eggs.json"
+SCRAPEDUCK_RESEARCH_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/research.json"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_GM = os.path.join(SCRIPT_DIR, "gamemaster.json")
@@ -42,6 +45,9 @@ CACHE_KO = os.path.join(SCRIPT_DIR, "korean_names.csv")
 CACHE_MOVES = os.path.join(SCRIPT_DIR, "moves.csv")
 CACHE_MOVE_NAMES = os.path.join(SCRIPT_DIR, "move_names.csv")
 CACHE_RAIDS = os.path.join(SCRIPT_DIR, "raids.json")
+CACHE_EVENTS = os.path.join(SCRIPT_DIR, "events.json")
+CACHE_EGGS = os.path.join(SCRIPT_DIR, "eggs.json")
+CACHE_RESEARCH = os.path.join(SCRIPT_DIR, "research.json")
 SPRITE_DIR = os.path.join(SCRIPT_DIR, "sprites")
 FAVORITES_PATH = os.path.join(SCRIPT_DIR, "favorites.json")
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
@@ -452,6 +458,48 @@ def load_raid_bosses(force=False):
         return []
 
 
+def load_events(force=False):
+    """ScrapedDuck (LeekDuck mirror) 의 이벤트 일정. 1일마다 자동 갱신."""
+    _ensure_file(CACHE_EVENTS, lambda p: _download(SCRAPEDUCK_EVENTS_URL, p),
+                 "이벤트 일정", 1, force)
+    if not os.path.exists(CACHE_EVENTS):
+        return []
+    try:
+        with open(CACHE_EVENTS, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"events.json 파싱 실패: {e}")
+        return []
+
+
+def load_eggs(force=False):
+    """ScrapedDuck 알 부화 풀. 7일마다 자동 갱신."""
+    _ensure_file(CACHE_EGGS, lambda p: _download(SCRAPEDUCK_EGGS_URL, p),
+                 "알 부화 풀", 7, force)
+    if not os.path.exists(CACHE_EGGS):
+        return []
+    try:
+        with open(CACHE_EGGS, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"eggs.json 파싱 실패: {e}")
+        return []
+
+
+def load_research(force=False):
+    """ScrapedDuck 필드 리서치 태스크. 1일마다 자동 갱신."""
+    _ensure_file(CACHE_RESEARCH, lambda p: _download(SCRAPEDUCK_RESEARCH_URL, p),
+                 "필드 리서치", 1, force)
+    if not os.path.exists(CACHE_RESEARCH):
+        return []
+    try:
+        with open(CACHE_RESEARCH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"research.json 파싱 실패: {e}")
+        return []
+
+
 def refresh_all_data():
     """모든 시즌별 데이터 강제 재다운로드. gm 갱신 후 LEAGUES 재구성."""
     gm = load_gamemaster(force=True)
@@ -459,6 +507,9 @@ def refresh_all_data():
     load_korean_dex_map(force=True)
     load_move_ko_map(force=True)
     load_raid_bosses(force=True)
+    load_events(force=True)
+    load_eggs(force=True)
+    load_research(force=True)
     for lg in LEAGUES:
         load_league_rankings(lg.cup_id, lg.cap, force=True)
 
@@ -466,7 +517,9 @@ def refresh_all_data():
 def data_status():
     """[(label, path, age_days), ...] — 각 데이터 파일 현황."""
     items = [("게임마스터", CACHE_GM), ("한글 이름", CACHE_KO),
-             ("기술 한글", CACHE_MOVE_NAMES)]
+             ("기술 한글", CACHE_MOVE_NAMES),
+             ("레이드 보스", CACHE_RAIDS), ("이벤트", CACHE_EVENTS),
+             ("알 부화", CACHE_EGGS), ("리서치", CACHE_RESEARCH)]
     for lg in LEAGUES:
         c = lg.cap if lg.cap is not None else 10000
         items.append((f"랭킹·{lg.name}", _ranking_cache_path(lg.cup_id, c)))
@@ -3754,6 +3807,487 @@ def run_gui(gm):
         if not lines:
             lines.append("✅ 균형 좋음 — 일방적 약점 없음.")
         team_summary_var.set("\n".join(lines))
+
+    # ===== 신규 일정 탭들의 공용 헬퍼 =====
+    def _en_to_display(en_name):
+        """영어 포켓몬 이름 → 한글 display명 (실패 시 영문 그대로)."""
+        if not en_name:
+            return ""
+        p = find_boss_pokemon(en_name, state["gm"])
+        if p:
+            return sid_to_display.get(p["speciesId"], en_name)
+        return en_name
+
+    def _format_iso_short(iso_str):
+        """ISO 8601 문자열 → 'MM/DD HH:mm' (실패 시 원문 앞 16자)."""
+        if not iso_str:
+            return ""
+        try:
+            from datetime import datetime
+            s = iso_str.replace("Z", "").split(".")[0]
+            dt = datetime.fromisoformat(s)
+            return dt.strftime("%m/%d %H:%M")
+        except Exception:
+            return iso_str[:16]
+
+    def _jump_to_pokemon_by_en(en_name):
+        """영어 이름의 포켓몬을 좌측 리스트박스에서 선택 + PvP 분석 탭으로 이동."""
+        p = find_boss_pokemon(en_name, state["gm"])
+        if not p:
+            return False
+        sid = p["speciesId"]
+        disp = sid_to_display.get(sid)
+        if not disp:
+            return False
+        try:
+            select_pokemon_by_display(disp)
+            notebook.select(iv_tab)
+            return True
+        except Exception:
+            return False
+
+    # ===== Tab: 레이드 일정 =====
+    raid_sched_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(raid_sched_tab, text="  레이드 일정  ")
+
+    sched_top = ttk.Frame(raid_sched_tab)
+    sched_top.pack(fill="x", pady=(0, 6))
+    ttk.Label(sched_top, text="현재 활성 레이드 보스 — 더블클릭 시 PvE 카운터로 이동",
+              font=("", 9), foreground="#555").pack(side="left")
+    ttk.Button(sched_top, text="갱신", width=8,
+               command=lambda: _reload_raid_sched()).pack(side="right")
+
+    raid_sched_tree = ttk.Treeview(raid_sched_tab,
+                                   columns=("tier", "name", "types", "cp", "shiny"),
+                                   show="headings", height=22, selectmode="browse")
+    for c, h, w in [("tier", "티어", 90), ("name", "포켓몬", 240),
+                    ("types", "타입", 140), ("cp", "CP 범위", 120),
+                    ("shiny", "색이다른", 70)]:
+        raid_sched_tree.heading(c, text=h)
+        raid_sched_tree.column(c, width=w, anchor="w" if c == "name" else "center")
+    raid_sched_tree.pack(fill="both", expand=True)
+    raid_sched_tree.tag_configure("legendary", background="#fff4e0")
+    raid_sched_tree.tag_configure("mega",      background="#f0e0ff")
+    raid_sched_tree.tag_configure("shadow",    background="#e0e0e0")
+
+    def _reload_raid_sched():
+        for r in raid_sched_tree.get_children():
+            raid_sched_tree.delete(r)
+        try:
+            bosses = load_raid_bosses(force=True)
+            raid_state["bosses"] = bosses
+            _populate_raid_sched(bosses)
+        except Exception as e:
+            print(f"레이드 일정 갱신 실패: {e}")
+
+    def _populate_raid_sched(bosses):
+        order = {"5-star": 0, "Mega": 1, "Elite": 1, "Shadow": 2,
+                 "3-star": 3, "1-star": 4}
+        def key(b):
+            t = (b.get("tier") or "").lower()
+            for k, v in order.items():
+                if k.lower() in t:
+                    return (v, b.get("name", ""))
+            return (9, b.get("name", ""))
+        for b in sorted(bosses, key=key):
+            tier_raw = b.get("tier", "") or ""
+            tl = tier_raw.lower()
+            if "5-star" in tl: tier_ko, tag = "5★ 전설", "legendary"
+            elif "mega" in tl: tier_ko, tag = "메가", "mega"
+            elif "shadow" in tl: tier_ko, tag = "그림자", "shadow"
+            elif "elite" in tl: tier_ko, tag = "엘리트", "mega"
+            elif "3-star" in tl: tier_ko, tag = "3★", ""
+            elif "1-star" in tl: tier_ko, tag = "1★", ""
+            else: tier_ko, tag = tier_raw, ""
+
+            en_name = b.get("name", "?")
+            ko = _en_to_display(en_name)
+            types = b.get("types", []) or []
+            type_str = " · ".join(TYPE_KO.get(t.lower(), t) for t in types)
+            cp = b.get("combatPower", {}) or {}
+            normal = cp.get("normal", {}) or {}
+            cp_min = normal.get("min") or cp.get("min") or "-"
+            cp_max = normal.get("max") or cp.get("max") or "-"
+            cp_str = f"{cp_min}~{cp_max}" if cp_min != "-" else "-"
+            shiny = "○" if b.get("canBeShiny") else ""
+            raid_sched_tree.insert("", "end",
+                                   values=(tier_ko, ko, type_str, cp_str, shiny),
+                                   tags=(tag,) if tag else (),
+                                   text=en_name)
+
+    def _on_raid_sched_double(_e=None):
+        sel = raid_sched_tree.selection()
+        if not sel:
+            return
+        en_name = raid_sched_tree.item(sel[0], "text")
+        # 좌측 리스트 + iv 탭으로 점프
+        if not _jump_to_pokemon_by_en(en_name):
+            # 매칭 안 되면 PvE 카운터 탭으로만 이동
+            notebook.select(raid_tab)
+            return
+        notebook.select(raid_tab)
+
+    raid_sched_tree.bind("<Double-Button-1>", _on_raid_sched_double)
+    _populate_raid_sched(raid_state.get("bosses", []))
+
+    # ===== Tab: 이벤트 캘린더 =====
+    events_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(events_tab, text="  이벤트  ")
+
+    events_state = {"data": [], "filter": "all"}
+
+    ev_top = ttk.Frame(events_tab)
+    ev_top.pack(fill="x", pady=(0, 6))
+    ttk.Label(ev_top, text="포켓몬 GO 이벤트 일정 (LeekDuck mirror)",
+              font=("", 9), foreground="#555").pack(side="left")
+
+    ev_filter_var = tk.StringVar(value="진행/예정")
+    ev_filter_combo = ttk.Combobox(ev_top, textvariable=ev_filter_var,
+                                   values=["진행/예정", "진행 중", "예정", "전체"],
+                                   width=10, state="readonly")
+    ev_filter_combo.pack(side="left", padx=(12, 4))
+    ev_filter_combo.bind("<<ComboboxSelected>>", lambda e: _populate_events())
+
+    ttk.Button(ev_top, text="갱신", width=8,
+               command=lambda: _reload_events()).pack(side="right")
+
+    ev_tree = ttk.Treeview(events_tab,
+                           columns=("start", "end", "type", "name"),
+                           show="headings", height=22, selectmode="browse")
+    for c, h, w in [("start", "시작", 110), ("end", "종료", 110),
+                    ("type", "종류", 130), ("name", "이벤트", 540)]:
+        ev_tree.heading(c, text=h)
+        ev_tree.column(c, width=w, anchor="w" if c == "name" else "center")
+    ev_tree.pack(fill="both", expand=True)
+    ev_tree.tag_configure("active",  background="#e0ffe0")
+    ev_tree.tag_configure("soon",    background="#fffadf")
+    ev_tree.tag_configure("past",    foreground="#999")
+
+    ev_detail_var = tk.StringVar(value="")
+    ttk.Label(events_tab, textvariable=ev_detail_var,
+              font=("", 9), foreground="#444",
+              justify="left", wraplength=1000).pack(anchor="w", fill="x", pady=(6, 0))
+
+    EVENT_TYPE_KO = {
+        "community-day": "커뮤니티 데이",
+        "raid-battles": "레이드",
+        "raid-hour": "레이드 아워",
+        "raid-day": "레이드 데이",
+        "raid-weekend": "레이드 주말",
+        "pokemon-spotlight-hour": "스포트라이트 아워",
+        "research": "리서치",
+        "timed-research": "시간제한 리서치",
+        "research-breakthrough": "리서치 돌파",
+        "go-battle-league": "GO 배틀 리그",
+        "pokemon-go-fest": "GO Fest",
+        "ticketed-event": "유료 이벤트",
+        "event": "일반 이벤트",
+        "season": "시즌",
+        "go-pass": "GO 패스",
+        "live-event": "오프라인 이벤트",
+        "global-challenge": "글로벌 챌린지",
+        "update": "업데이트",
+    }
+
+    def _reload_events():
+        try:
+            events_state["data"] = load_events(force=True)
+        except Exception as e:
+            print(f"이벤트 갱신 실패: {e}")
+        _populate_events()
+
+    def _populate_events():
+        for r in ev_tree.get_children():
+            ev_tree.delete(r)
+        from datetime import datetime
+        now = datetime.now()
+        filt = ev_filter_var.get()
+        rows = []
+        for ev in events_state["data"]:
+            start_iso = ev.get("start") or ""
+            end_iso = ev.get("end") or ""
+            try:
+                start_dt = datetime.fromisoformat(start_iso.replace("Z", "").split(".")[0]) if start_iso else None
+            except Exception:
+                start_dt = None
+            try:
+                end_dt = datetime.fromisoformat(end_iso.replace("Z", "").split(".")[0]) if end_iso else None
+            except Exception:
+                end_dt = None
+            # 상태 판정
+            if start_dt and end_dt:
+                if end_dt < now: status = "past"
+                elif start_dt <= now <= end_dt: status = "active"
+                else: status = "soon"
+            elif start_dt:
+                status = "active" if start_dt <= now else "soon"
+            else:
+                status = "active"
+            # 필터
+            if filt == "진행 중" and status != "active": continue
+            if filt == "예정" and status != "soon": continue
+            if filt == "진행/예정" and status == "past": continue
+            rows.append((start_dt or datetime.max, ev, status))
+        rows.sort(key=lambda x: x[0])
+        for _, ev, status in rows:
+            et = ev.get("eventType", "") or ""
+            type_ko = EVENT_TYPE_KO.get(et, et)
+            ev_tree.insert("", "end",
+                           values=(_format_iso_short(ev.get("start")),
+                                   _format_iso_short(ev.get("end")),
+                                   type_ko,
+                                   ev.get("name", "")),
+                           tags=(status,),
+                           text=ev.get("eventID", ""))
+
+    def _on_event_select(_e=None):
+        sel = ev_tree.selection()
+        if not sel:
+            ev_detail_var.set("")
+            return
+        eid = ev_tree.item(sel[0], "text")
+        ev = next((e for e in events_state["data"] if e.get("eventID") == eid), None)
+        if not ev:
+            ev_detail_var.set("")
+            return
+        parts = []
+        if ev.get("heading"):
+            parts.append(f"📌 {ev['heading']}")
+        extra = ev.get("extraData") or {}
+        # community-day spawns
+        cd = extra.get("communityday") or {}
+        spawns = cd.get("spawns") or []
+        if spawns:
+            names = [_en_to_display(s.get("name", "")) for s in spawns[:5]]
+            parts.append(f"🎉 출현: {', '.join(n for n in names if n)}")
+        bonuses = cd.get("bonuses") or []
+        if bonuses:
+            parts.append(f"보너스: {' · '.join(str(b.get('text', b)) for b in bonuses[:4])}")
+        # raid bosses
+        rb = extra.get("raidbattles") or {}
+        rbosses = rb.get("bosses") or []
+        if rbosses:
+            names = [_en_to_display(b.get("name", "")) for b in rbosses[:6]]
+            parts.append(f"⚔ 보스: {', '.join(n for n in names if n)}")
+        # generic spawns
+        gen = extra.get("generic") or {}
+        if gen.get("hasSpawns"):
+            parts.append("• 야생 스폰 증가")
+        if gen.get("hasFieldResearchTasks"):
+            parts.append("• 시간제한 필드 리서치")
+        if ev.get("link"):
+            parts.append(f"🔗 {ev['link']}")
+        ev_detail_var.set("    ".join(parts) if parts else "(추가 정보 없음)")
+
+    def _on_event_double(_e=None):
+        """이벤트의 첫 출현/보스 포켓몬을 좌측 리스트에서 선택."""
+        sel = ev_tree.selection()
+        if not sel: return
+        eid = ev_tree.item(sel[0], "text")
+        ev = next((e for e in events_state["data"] if e.get("eventID") == eid), None)
+        if not ev: return
+        extra = ev.get("extraData") or {}
+        candidates = []
+        cd = extra.get("communityday") or {}
+        for s in (cd.get("spawns") or []):
+            if s.get("name"):
+                candidates.append(s["name"])
+        rb = extra.get("raidbattles") or {}
+        for b in (rb.get("bosses") or []):
+            if b.get("name"):
+                candidates.append(b["name"])
+        for en in candidates:
+            if _jump_to_pokemon_by_en(en):
+                return
+
+    ev_tree.bind("<<TreeviewSelect>>", _on_event_select)
+    ev_tree.bind("<Double-Button-1>", _on_event_double)
+
+    # ===== Tab: 알 부화 풀 =====
+    eggs_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(eggs_tab, text="  알 부화  ")
+
+    eggs_state = {"data": []}
+
+    eg_top = ttk.Frame(eggs_tab)
+    eg_top.pack(fill="x", pady=(0, 6))
+    ttk.Label(eg_top,
+              text="거리별 알 부화 풀 — 더블클릭 시 좌측 선택 + PvP 분석 이동",
+              font=("", 9), foreground="#555").pack(side="left")
+
+    eg_filter_var = tk.StringVar(value="전체")
+    eg_filter_combo = ttk.Combobox(eg_top, textvariable=eg_filter_var,
+                                   values=["전체", "1 km", "2 km", "5 km",
+                                           "7 km", "10 km", "12 km"],
+                                   width=8, state="readonly")
+    eg_filter_combo.pack(side="left", padx=(12, 4))
+    eg_filter_combo.bind("<<ComboboxSelected>>", lambda e: _populate_eggs())
+
+    eg_shiny_only_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(eg_top, text="색이 다른 가능만",
+                    variable=eg_shiny_only_var,
+                    command=lambda: _populate_eggs()).pack(side="left", padx=(8, 4))
+
+    ttk.Button(eg_top, text="갱신", width=8,
+               command=lambda: _reload_eggs()).pack(side="right")
+
+    eg_tree = ttk.Treeview(eggs_tab,
+                           columns=("dist", "name", "cp", "shiny", "flags"),
+                           show="headings", height=22, selectmode="browse")
+    for c, h, w in [("dist", "거리", 80), ("name", "포켓몬", 280),
+                    ("cp", "CP 범위", 120), ("shiny", "색이다른", 80),
+                    ("flags", "특이사항", 240)]:
+        eg_tree.heading(c, text=h)
+        eg_tree.column(c, width=w, anchor="w" if c in ("name", "flags") else "center")
+    eg_tree.pack(fill="both", expand=True)
+    eg_tree.tag_configure("adv",     background="#e8e8ff")  # 모험 모드
+    eg_tree.tag_configure("gift",    background="#fff0f0")  # 선물
+    eg_tree.tag_configure("regional", background="#fff8d0")  # 지역한정
+
+    def _reload_eggs():
+        try:
+            eggs_state["data"] = load_eggs(force=True)
+        except Exception as e:
+            print(f"알 갱신 실패: {e}")
+        _populate_eggs()
+
+    def _populate_eggs():
+        for r in eg_tree.get_children():
+            eg_tree.delete(r)
+        filt_dist = eg_filter_var.get()
+        shiny_only = eg_shiny_only_var.get()
+        # 거리별 정렬
+        dist_order = {"1 km": 1, "2 km": 2, "5 km": 5,
+                      "7 km": 7, "10 km": 10, "12 km": 12}
+        rows = []
+        for egg in eggs_state["data"]:
+            d = egg.get("eggType", "")
+            if filt_dist != "전체" and d != filt_dist:
+                continue
+            if shiny_only and not egg.get("canBeShiny"):
+                continue
+            rows.append(egg)
+        rows.sort(key=lambda e: (dist_order.get(e.get("eggType", ""), 99),
+                                 -((e.get("combatPower") or {}).get("max") or 0)))
+        for egg in rows:
+            en = egg.get("name", "")
+            ko = _en_to_display(en)
+            cp = egg.get("combatPower") or {}
+            cp_str = f"{cp.get('min', '-')}~{cp.get('max', '-')}"
+            shiny = "○" if egg.get("canBeShiny") else ""
+            flags = []
+            tag = ""
+            if egg.get("isAdventureSync"):
+                flags.append("모험 모드"); tag = "adv"
+            if egg.get("isGiftExchange"):
+                flags.append("선물 알"); tag = "gift"
+            if egg.get("isRegional"):
+                flags.append("지역 한정"); tag = "regional"
+            eg_tree.insert("", "end",
+                           values=(egg.get("eggType", ""), ko, cp_str, shiny,
+                                   " · ".join(flags)),
+                           tags=(tag,) if tag else (),
+                           text=en)
+
+    def _on_egg_double(_e=None):
+        sel = eg_tree.selection()
+        if not sel: return
+        en = eg_tree.item(sel[0], "text")
+        _jump_to_pokemon_by_en(en)
+
+    eg_tree.bind("<Double-Button-1>", _on_egg_double)
+
+    # ===== Tab: 필드 리서치 =====
+    research_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(research_tab, text="  리서치  ")
+
+    research_state = {"data": []}
+
+    rs_top = ttk.Frame(research_tab)
+    rs_top.pack(fill="x", pady=(0, 6))
+    ttk.Label(rs_top,
+              text="필드 리서치 태스크 → 보상 매핑 (더블클릭 시 보상 포켓몬 선택)",
+              font=("", 9), foreground="#555").pack(side="left")
+
+    rs_search_var = tk.StringVar()
+    ttk.Entry(rs_top, textvariable=rs_search_var, width=24
+              ).pack(side="left", padx=(12, 4))
+    ttk.Label(rs_top, text="(검색)", font=("", 8), foreground="#888"
+              ).pack(side="left")
+    rs_search_var.trace_add("write", lambda *_: _populate_research())
+
+    rs_shiny_only_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(rs_top, text="색이 다른 가능만",
+                    variable=rs_shiny_only_var,
+                    command=lambda: _populate_research()).pack(side="left", padx=(8, 4))
+
+    ttk.Button(rs_top, text="갱신", width=8,
+               command=lambda: _reload_research()).pack(side="right")
+
+    rs_tree = ttk.Treeview(research_tab,
+                           columns=("task", "reward", "cp", "shiny"),
+                           show="headings", height=22, selectmode="browse")
+    for c, h, w in [("task", "태스크", 380), ("reward", "보상 포켓몬", 260),
+                    ("cp", "CP 범위", 120), ("shiny", "색이다른", 80)]:
+        rs_tree.heading(c, text=h)
+        rs_tree.column(c, width=w, anchor="w" if c in ("task", "reward") else "center")
+    rs_tree.pack(fill="both", expand=True)
+
+    def _reload_research():
+        try:
+            research_state["data"] = load_research(force=True)
+        except Exception as e:
+            print(f"리서치 갱신 실패: {e}")
+        _populate_research()
+
+    def _populate_research():
+        for r in rs_tree.get_children():
+            rs_tree.delete(r)
+        q = rs_search_var.get().strip().lower()
+        shiny_only = rs_shiny_only_var.get()
+        for task in research_state["data"]:
+            text = task.get("text", "")
+            rewards = task.get("rewards") or []
+            if not rewards:
+                continue
+            for rw in rewards:
+                en = rw.get("name", "")
+                if shiny_only and not rw.get("canBeShiny"):
+                    continue
+                ko = _en_to_display(en)
+                if q and q not in text.lower() and q not in ko.lower() and q not in en.lower():
+                    continue
+                cp = rw.get("combatPower") or {}
+                cp_str = f"{cp.get('min', '-')}~{cp.get('max', '-')}"
+                shiny = "○" if rw.get("canBeShiny") else ""
+                rs_tree.insert("", "end",
+                               values=(text, ko, cp_str, shiny),
+                               text=en)
+
+    def _on_research_double(_e=None):
+        sel = rs_tree.selection()
+        if not sel: return
+        en = rs_tree.item(sel[0], "text")
+        _jump_to_pokemon_by_en(en)
+
+    rs_tree.bind("<Double-Button-1>", _on_research_double)
+
+    # 초기 로딩 (블록되지 않도록 try)
+    try:
+        events_state["data"] = load_events()
+        _populate_events()
+    except Exception as e:
+        print(f"이벤트 초기 로드 실패: {e}")
+    try:
+        eggs_state["data"] = load_eggs()
+        _populate_eggs()
+    except Exception as e:
+        print(f"알 초기 로드 실패: {e}")
+    try:
+        research_state["data"] = load_research()
+        _populate_research()
+    except Exception as e:
+        print(f"리서치 초기 로드 실패: {e}")
 
     def find_ranking_entry(league_name, sid):
         for e in rankings.get(league_name, []):
