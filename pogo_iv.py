@@ -39,6 +39,7 @@ SCRAPEDUCK_RAIDS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/d
 SCRAPEDUCK_EVENTS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/events.json"
 SCRAPEDUCK_EGGS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/eggs.json"
 SCRAPEDUCK_RESEARCH_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/research.json"
+SCRAPEDUCK_ROCKETS_URL  = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/rocketLineups.json"
 POGOMATE_RAIDS_URL = "https://pogomate.com/raids"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +51,7 @@ CACHE_RAIDS = os.path.join(SCRIPT_DIR, "raids.json")
 CACHE_EVENTS = os.path.join(SCRIPT_DIR, "events.json")
 CACHE_EGGS = os.path.join(SCRIPT_DIR, "eggs.json")
 CACHE_RESEARCH = os.path.join(SCRIPT_DIR, "research.json")
+CACHE_ROCKETS  = os.path.join(SCRIPT_DIR, "rocket_lineups.json")
 CACHE_KR_RAIDS = os.path.join(SCRIPT_DIR, "kr_raids.json")
 SPRITE_DIR = os.path.join(SCRIPT_DIR, "sprites")
 FAVORITES_PATH = os.path.join(SCRIPT_DIR, "favorites.json")
@@ -637,6 +639,20 @@ def translate_research_task(en_text):
     return en_text  # fallback: 원문
 
 
+def load_rocket_lineups(force=False):
+    """ScrapedDuck rocketLineups.json — 보스/간부/조무래기 라인업. 1일 캐싱."""
+    _ensure_file(CACHE_ROCKETS, lambda p: _download(SCRAPEDUCK_ROCKETS_URL, p),
+                 "로켓 라인업", 1, force)
+    if not os.path.exists(CACHE_ROCKETS):
+        return []
+    try:
+        with open(CACHE_ROCKETS, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"rocketLineups.json 파싱 실패: {e}")
+        return []
+
+
 def load_research(force=False):
     """ScrapedDuck 필드 리서치 태스크. 1일마다 자동 갱신."""
     _ensure_file(CACHE_RESEARCH, lambda p: _download(SCRAPEDUCK_RESEARCH_URL, p),
@@ -836,6 +852,7 @@ def refresh_all_data():
     load_events(force=True)
     load_eggs(force=True)
     load_research(force=True)
+    load_rocket_lineups(force=True)
     for lg in LEAGUES:
         load_league_rankings(lg.cup_id, lg.cap, force=True)
 
@@ -846,7 +863,8 @@ def data_status():
              ("기술 한글", CACHE_MOVE_NAMES),
              ("레이드(글로벌)", CACHE_RAIDS), ("레이드(한국)", CACHE_KR_RAIDS),
              ("이벤트", CACHE_EVENTS),
-             ("알 부화", CACHE_EGGS), ("리서치", CACHE_RESEARCH)]
+             ("알 부화", CACHE_EGGS), ("리서치", CACHE_RESEARCH),
+             ("로켓 라인업", CACHE_ROCKETS)]
     for lg in LEAGUES:
         c = lg.cap if lg.cap is not None else 10000
         items.append((f"랭킹·{lg.name}", _ranking_cache_path(lg.cup_id, c)))
@@ -4324,6 +4342,174 @@ def run_gui(gm):
 
     rs_tree.bind("<Double-Button-1>", _on_research_double)
 
+    # ===== Tab: 로켓 라인업 (ScrapedDuck rocketLineups.json) =====
+    rkt_lineup_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(rkt_lineup_tab, text="  로켓 라인업  ")
+
+    rkt_state = {"data": []}
+
+    ttk.Label(rkt_lineup_tab,
+              text="GO 로켓단 보스/간부/조무래기 라인업. 슬롯별 가능 포켓몬 표시. "
+                   "더블클릭 시 첫 슬롯 포켓몬으로 좌측 선택 + PvE 로켓 탭(타입별 카운터) 이동.",
+              font=("", 9), foreground="#555",
+              justify="left", wraplength=1100).pack(anchor="w", pady=(0, 6))
+
+    rkl_top = ttk.Frame(rkt_lineup_tab)
+    rkl_top.pack(fill="x", pady=(0, 6))
+    rkl_filter_var = tk.StringVar(value="전체")
+    ttk.Label(rkl_top, text="필터:", font=("", 9)).pack(side="left")
+    rkl_filter_combo = ttk.Combobox(rkl_top, textvariable=rkl_filter_var,
+                                    values=["전체", "보스", "간부", "조무래기",
+                                            "색이 다른 가능만"],
+                                    width=18, state="readonly")
+    rkl_filter_combo.pack(side="left", padx=(4, 8))
+    rkl_filter_combo.bind("<<ComboboxSelected>>", lambda e: _populate_rocket())
+
+    ttk.Button(rkl_top, text="갱신", width=8,
+               command=lambda: _reload_rocket()).pack(side="right")
+    rkl_fresh_lbl = ttk.Label(rkl_top, text="", font=("", 8))
+    rkl_fresh_lbl.pack(side="right", padx=(0, 10))
+
+    rkl_frame = ttk.Frame(rkt_lineup_tab)
+    rkl_frame.pack(fill="both", expand=True)
+    rkl_scroll = ttk.Scrollbar(rkl_frame, orient="vertical")
+    rkl_scroll.pack(side="right", fill="y")
+    rkl_tree = ttk.Treeview(rkl_frame,
+                            columns=("rank", "name", "type", "s1", "s2", "s3", "shiny"),
+                            show="headings", height=22, selectmode="browse",
+                            yscrollcommand=rkl_scroll.set)
+    for c, h, w in [("rank", "등급", 70), ("name", "NPC", 200),
+                    ("type", "타입", 70),
+                    ("s1", "슬롯 1", 200), ("s2", "슬롯 2", 220),
+                    ("s3", "슬롯 3", 220), ("shiny", "색다른", 60)]:
+        rkl_tree.heading(c, text=h,
+                         command=lambda col=c: _sort_tree(rkl_tree, col))
+        rkl_tree.column(c, width=w,
+                        anchor="w" if c in ("name", "s1", "s2", "s3") else "center")
+    rkl_tree.pack(side="left", fill="both", expand=True)
+    rkl_scroll.config(command=rkl_tree.yview)
+    rkl_tree.tag_configure("boss",   background="#ffd0d0", font=("", 9, "bold"))
+    rkl_tree.tag_configure("leader", background="#fff0d0", font=("", 9, "bold"))
+    rkl_tree.tag_configure("grunt",  background="")
+
+    # 간부 이름 한글 매핑 (한국 PoGO 공식)
+    _ROCKET_NPC_KO = {
+        "Giovanni": "보스 지오반니",
+        "Cliff":    "클리프",
+        "Arlo":     "알로",
+        "Sierra":   "시에라",
+    }
+
+    def _npc_name_ko(en_name, en_type=""):
+        """영문 NPC 이름 → 한글. 조무래기는 '<타입> 타입 조무래기 (남/여)' 패턴."""
+        if en_name in _ROCKET_NPC_KO:
+            return _ROCKET_NPC_KO[en_name]
+        # "Fire-type Female Grunt", "Decoy Female Grunt" 등
+        gender = ""
+        if "Male" in en_name:   gender = " (남)"
+        elif "Female" in en_name: gender = " (여)"
+        if "Decoy" in en_name:
+            return f"미끼 조무래기{gender}"
+        if "Beginner" in en_name:
+            return f"초보 조무래기{gender}"
+        type_ko = TYPE_KO.get(en_type.lower(), en_type) if en_type else ""
+        if type_ko:
+            return f"{type_ko}타입 조무래기{gender}"
+        return en_name
+
+    def _slot_str(slot_list):
+        """슬롯 옵션 → 한글 포켓몬명 ', ' 조합 + 색다른 ★ 표시."""
+        if not slot_list:
+            return ""
+        names = []
+        for p in slot_list:
+            en = p.get("name", "")
+            ko = _en_to_display(en) if en else "?"
+            mark = "★" if p.get("canBeShiny") else ""
+            enc = "💎" if p.get("isEncounter") else ""
+            names.append(f"{mark}{enc}{ko}")
+        return ", ".join(names)
+
+    def _slot_has_shiny(slot_list):
+        return any(p.get("canBeShiny") for p in (slot_list or []))
+
+    def _populate_rocket():
+        for r in rkl_tree.get_children():
+            rkl_tree.delete(r)
+        filt = rkl_filter_var.get()
+        rows = []
+        for npc in rkt_state.get("data", []):
+            title = npc.get("title", "") or ""
+            if "Boss" in title:    rank, tag, sort_k = "보스", "boss", 0
+            elif "Leader" in title: rank, tag, sort_k = "간부", "leader", 1
+            else:                   rank, tag, sort_k = "조무래기", "grunt", 2
+            if filt == "보스" and rank != "보스": continue
+            if filt == "간부" and rank != "간부": continue
+            if filt == "조무래기" and rank != "조무래기": continue
+            # 색이 다른 가능만 필터
+            any_shiny = any(_slot_has_shiny(npc.get(k)) for k in
+                            ("firstPokemon","secondPokemon","thirdPokemon"))
+            if filt == "색이 다른 가능만" and not any_shiny:
+                continue
+            rows.append((sort_k, npc, rank, tag, any_shiny))
+        # 정렬: 보스/간부 우선, 그 다음 조무래기는 타입 순
+        type_order = ["normal","fire","water","electric","grass","ice","fighting",
+                      "poison","ground","flying","psychic","bug","rock","ghost",
+                      "dragon","dark","steel","fairy",""]
+        def _key(r):
+            sort_k, npc, rank, tag, _ = r
+            t = (npc.get("type") or "").lower()
+            return (sort_k, type_order.index(t) if t in type_order else 99,
+                    npc.get("name",""))
+        rows.sort(key=_key)
+        for _, npc, rank, tag, any_shiny in rows:
+            en = npc.get("name","")
+            type_en = npc.get("type","") or ""
+            ko_name = _npc_name_ko(en, type_en)
+            type_disp = TYPE_KO.get(type_en.lower(), type_en) if type_en else "-"
+            shiny_disp = "★" if any_shiny else ""
+            rkl_tree.insert("", "end",
+                            values=(rank, ko_name, type_disp,
+                                    _slot_str(npc.get("firstPokemon")),
+                                    _slot_str(npc.get("secondPokemon")),
+                                    _slot_str(npc.get("thirdPokemon")),
+                                    shiny_disp),
+                            tags=(tag,),
+                            text=en)
+        # 신선도 라벨
+        txt, c = _freshness_label(CACHE_ROCKETS, "갱신: ")
+        rkl_fresh_lbl.configure(text=txt, foreground=c)
+
+    def _reload_rocket():
+        try:
+            rkt_state["data"] = load_rocket_lineups(force=True)
+        except Exception as e:
+            print(f"로켓 라인업 갱신 실패: {e}")
+        _populate_rocket()
+
+    def _on_rocket_double(_e=None):
+        sel = rkl_tree.selection()
+        if not sel: return
+        en = rkl_tree.item(sel[0], "text")
+        # NPC 의 첫 슬롯 첫 포켓몬을 좌측 선택 + PvE 로켓 탭으로 (타입은 사용자가 콤보로 선택)
+        npc = next((n for n in rkt_state.get("data", []) if n.get("name") == en), None)
+        if not npc: return
+        first_opts = npc.get("firstPokemon") or []
+        if first_opts:
+            first_en = first_opts[0].get("name", "")
+            _jump_to_pokemon_by_en(first_en)
+        notebook.select(rkt_tab)
+        # 조무래기 타입이 있으면 PvE 로켓 타입 콤보 자동 설정
+        type_en = (npc.get("type") or "").lower()
+        if type_en and type_en in TYPE_KO:
+            try:
+                rkt_type_var.set(TYPE_KO[type_en])
+                refresh_rocket()
+            except Exception:
+                pass
+
+    rkl_tree.bind("<Double-Button-1>", _on_rocket_double)
+
     # 초기 로딩 (블록되지 않도록 try)
     try:
         events_state["data"] = load_events()
@@ -4343,6 +4529,11 @@ def run_gui(gm):
     except Exception as e:
         print(f"리서치 초기 로드 실패: {e}")
     _update_rs_fresh()
+    try:
+        rkt_state["data"] = load_rocket_lineups()
+        _populate_rocket()
+    except Exception as e:
+        print(f"로켓 라인업 초기 로드 실패: {e}")
 
     def find_ranking_entry(league_name, sid):
         for e in rankings.get(league_name, []):
@@ -5094,6 +5285,10 @@ def run_gui(gm):
     # 다른 탭은 add 순서 그대로. insert 는 같은 widget 이면 자동 이동.
     try:
         notebook.insert(4, team_meta_tab)
+        # 로켓 라인업은 PvE 로켓 바로 뒤에 (현 순서:
+        # PvP×5, 타입(5), PvE 카운터(6), DPS(7), 로켓(8), 일정 시작…)
+        # → 로켓 라인업을 idx 9 로 옮김
+        notebook.insert(9, rkt_lineup_tab)
     except Exception:
         pass
 
