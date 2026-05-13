@@ -369,6 +369,23 @@ def _format_age(path):
     return datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M")
 
 
+def _freshness_label(path, prefix=""):
+    """파일 마지막 수정 → ('5시간 전' 문구, 색상코드).
+    < 1일 회색 · 1~7일 주황 · 7일+ 빨강 · 없음 빨강."""
+    import time
+    if not os.path.exists(path):
+        return (f"{prefix}없음", "#a00")
+    age = time.time() - os.path.getmtime(path)
+    if   age < 60:    t = "방금 전"
+    elif age < 3600:  t = f"{int(age/60)}분 전"
+    elif age < 86400: t = f"{int(age/3600)}시간 전"
+    else:             t = f"{int(age/86400)}일 전"
+    if   age < 86400:  c = "#666"
+    elif age < 604800: c = "#c80"
+    else:              c = "#a00"
+    return (f"{prefix}{t}", c)
+
+
 def _ensure_file(path, downloader, label, max_age_days, force=False):
     """파일이 없거나 오래되었으면 다운로드. downloader는 (path)→None 함수."""
     if not force and not _is_stale(path, max_age_days):
@@ -2336,12 +2353,12 @@ def run_gui(gm):
 
     root = tk.Tk()
     root.title("Pokemon GO 개체값 리그 랭커")
-    geom = settings.get("geometry", "1360x840")
+    geom = settings.get("geometry", "1500x920")
     try:
         root.geometry(geom)
     except Exception:
-        root.geometry("1360x840")
-    root.minsize(1280, 740)
+        root.geometry("1500x920")
+    root.minsize(1360, 800)
 
     try:
         style = ttk.Style()
@@ -4166,6 +4183,20 @@ def run_gui(gm):
               font=("", 9), foreground="#555").pack(side="left")
     ttk.Button(sched_top, text="갱신", width=8,
                command=lambda: _reload_raid_sched()).pack(side="right")
+    sched_fresh_lbl = ttk.Label(sched_top, text="", font=("", 8))
+    sched_fresh_lbl.pack(side="right", padx=(0, 10))
+
+    def _update_sched_fresh():
+        g_txt, _ = _freshness_label(CACHE_RAIDS, "🌐 ")
+        k_txt, _ = _freshness_label(CACHE_KR_RAIDS, "🇰🇷 ")
+        # 둘 중 더 오래된 것 기준 색상
+        import os.path as _op, time as _t
+        ages = [_t.time() - _op.getmtime(p) for p in (CACHE_RAIDS, CACHE_KR_RAIDS) if _op.exists(p)]
+        max_age = max(ages) if ages else float("inf")
+        if max_age < 86400:  c = "#666"
+        elif max_age < 604800: c = "#c80"
+        else: c = "#a00"
+        sched_fresh_lbl.configure(text=f"{g_txt} · {k_txt}", foreground=c)
 
     ttk.Label(raid_sched_tab,
               text="ℹ 글로벌(LeekDuck) + 한국(pogomate.com) 통합 표시. "
@@ -4206,6 +4237,7 @@ def run_gui(gm):
             _populate_raid_sched(bosses)
         except Exception as e:
             print(f"레이드 일정 갱신 실패: {e}")
+        _update_sched_fresh()
 
     def _populate_raid_sched(bosses):
         order = {"5-star": 0, "Mega": 1, "Elite": 1, "Shadow": 2,
@@ -4269,6 +4301,7 @@ def run_gui(gm):
 
     raid_sched_tree.bind("<Double-Button-1>", _on_raid_sched_double)
     _populate_raid_sched(raid_state.get("bosses", []))
+    _update_sched_fresh()
 
     # ===== Tab: 이벤트 캘린더 =====
     events_tab = ttk.Frame(notebook, padding=(8, 8))
@@ -4290,6 +4323,12 @@ def run_gui(gm):
 
     ttk.Button(ev_top, text="갱신", width=8,
                command=lambda: _reload_events()).pack(side="right")
+    ev_fresh_lbl = ttk.Label(ev_top, text="", font=("", 8))
+    ev_fresh_lbl.pack(side="right", padx=(0, 10))
+
+    def _update_ev_fresh():
+        txt, c = _freshness_label(CACHE_EVENTS)
+        ev_fresh_lbl.configure(text=f"갱신: {txt}", foreground=c)
 
     ev_frame = ttk.Frame(events_tab)
     ev_frame.pack(fill="both", expand=True)
@@ -4342,6 +4381,7 @@ def run_gui(gm):
         except Exception as e:
             print(f"이벤트 갱신 실패: {e}")
         _populate_events()
+        _update_ev_fresh()
 
     def _populate_events():
         for r in ev_tree.get_children():
@@ -4477,6 +4517,12 @@ def run_gui(gm):
 
     ttk.Button(eg_top, text="갱신", width=8,
                command=lambda: _reload_eggs()).pack(side="right")
+    eg_fresh_lbl = ttk.Label(eg_top, text="", font=("", 8))
+    eg_fresh_lbl.pack(side="right", padx=(0, 10))
+
+    def _update_eg_fresh():
+        txt, c = _freshness_label(CACHE_EGGS)
+        eg_fresh_lbl.configure(text=f"갱신: {txt}", foreground=c)
 
     eg_frame = ttk.Frame(eggs_tab)
     eg_frame.pack(fill="both", expand=True)
@@ -4504,6 +4550,7 @@ def run_gui(gm):
         except Exception as e:
             print(f"알 갱신 실패: {e}")
         _populate_eggs()
+        _update_eg_fresh()
 
     def _populate_eggs():
         for r in eg_tree.get_children():
@@ -4581,6 +4628,12 @@ def run_gui(gm):
 
     ttk.Button(rs_top, text="갱신", width=8,
                command=lambda: _reload_research()).pack(side="right")
+    rs_fresh_lbl = ttk.Label(rs_top, text="", font=("", 8))
+    rs_fresh_lbl.pack(side="right", padx=(0, 10))
+
+    def _update_rs_fresh():
+        txt, c = _freshness_label(CACHE_RESEARCH)
+        rs_fresh_lbl.configure(text=f"갱신: {txt}", foreground=c)
 
     rs_show_en_var = tk.BooleanVar(value=False)
     ttk.Checkbutton(rs_top, text="영문 원문도 표시",
@@ -4621,6 +4674,7 @@ def run_gui(gm):
         except Exception as e:
             print(f"리서치 갱신 실패: {e}")
         _populate_research()
+        _update_rs_fresh()
 
     def _populate_research():
         for r in rs_tree.get_children():
@@ -4668,16 +4722,19 @@ def run_gui(gm):
         _populate_events()
     except Exception as e:
         print(f"이벤트 초기 로드 실패: {e}")
+    _update_ev_fresh()
     try:
         eggs_state["data"] = load_eggs()
         _populate_eggs()
     except Exception as e:
         print(f"알 초기 로드 실패: {e}")
+    _update_eg_fresh()
     try:
         research_state["data"] = load_research()
         _populate_research()
     except Exception as e:
         print(f"리서치 초기 로드 실패: {e}")
+    _update_rs_fresh()
 
     def find_ranking_entry(league_name, sid):
         for e in rankings.get(league_name, []):
