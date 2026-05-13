@@ -3274,8 +3274,8 @@ def run_gui(gm):
     notebook.add(rkt_tab, text="  PvE 로켓  ")
 
     ttk.Label(rkt_tab,
-              text="로켓단 조무래기 카운터 — 조무래기는 항상 한 가지 타입 테마로 팀을 구성합니다.\n"
-                   "배틀 전 대사를 입력하거나 직접 타입을 선택하세요. 카운터 TOP 20 자동 표시.",
+              text="GO 로켓단 통합 탭 — 위쪽 표에서 NPC 선택 시 자동으로 타입별 카운터 표시. "
+                   "직접 대사/타입 입력도 가능. 조무래기는 단일 타입 팀, 간부/보스는 슬롯별 다양.",
               font=("", 9), foreground="#555", justify="left"
               ).pack(anchor="w", pady=(0, 8))
 
@@ -4342,17 +4342,17 @@ def run_gui(gm):
 
     rs_tree.bind("<Double-Button-1>", _on_research_double)
 
-    # ===== Tab: 로켓 라인업 (ScrapedDuck rocketLineups.json) =====
-    rkt_lineup_tab = ttk.Frame(notebook, padding=(8, 8))
-    notebook.add(rkt_lineup_tab, text="  로켓 라인업  ")
+    # ===== 로켓 라인업 섹션 (PvE 로켓 탭 상단으로 통합) =====
+    # rkt_tab 안에 직접 pack. 행 선택 시 아래 카운터 자동 갱신.
+    rkt_lineup_tab = ttk.Frame(rkt_tab)
 
     rkt_state = {"data": []}
 
     ttk.Label(rkt_lineup_tab,
-              text="GO 로켓단 보스/간부/조무래기 라인업. 슬롯별 가능 포켓몬 표시. "
-                   "더블클릭 시 첫 슬롯 포켓몬으로 좌측 선택 + PvE 로켓 탭(타입별 카운터) 이동.",
-              font=("", 9), foreground="#555",
-              justify="left", wraplength=1100).pack(anchor="w", pady=(0, 6))
+              text="▼ 로켓 라인업 — 행 클릭 시 아래 카운터 자동 갱신, "
+                   "더블클릭 시 첫 슬롯 포켓몬으로 좌측 선택.",
+              font=("", 9, "bold"), foreground="#444",
+              justify="left", wraplength=1100).pack(anchor="w", pady=(0, 4))
 
     rkl_top = ttk.Frame(rkt_lineup_tab)
     rkl_top.pack(fill="x", pady=(0, 6))
@@ -4376,7 +4376,7 @@ def run_gui(gm):
     rkl_scroll.pack(side="right", fill="y")
     rkl_tree = ttk.Treeview(rkl_frame,
                             columns=("rank", "name", "type", "s1", "s2", "s3", "shiny"),
-                            show="headings", height=22, selectmode="browse",
+                            show="headings", height=10, selectmode="browse",
                             yscrollcommand=rkl_scroll.set)
     for c, h, w in [("rank", "등급", 70), ("name", "NPC", 200),
                     ("type", "타입", 70),
@@ -4487,19 +4487,13 @@ def run_gui(gm):
             print(f"로켓 라인업 갱신 실패: {e}")
         _populate_rocket()
 
-    def _on_rocket_double(_e=None):
+    def _on_rocket_select(_e=None):
+        """행 선택 시 — 타입 자동 설정 + 아래 카운터 갱신."""
         sel = rkl_tree.selection()
         if not sel: return
         en = rkl_tree.item(sel[0], "text")
-        # NPC 의 첫 슬롯 첫 포켓몬을 좌측 선택 + PvE 로켓 탭으로 (타입은 사용자가 콤보로 선택)
         npc = next((n for n in rkt_state.get("data", []) if n.get("name") == en), None)
         if not npc: return
-        first_opts = npc.get("firstPokemon") or []
-        if first_opts:
-            first_en = first_opts[0].get("name", "")
-            _jump_to_pokemon_by_en(first_en)
-        notebook.select(rkt_tab)
-        # 조무래기 타입이 있으면 PvE 로켓 타입 콤보 자동 설정
         type_en = (npc.get("type") or "").lower()
         if type_en and type_en in TYPE_KO:
             try:
@@ -4508,7 +4502,26 @@ def run_gui(gm):
             except Exception:
                 pass
 
+    def _on_rocket_double(_e=None):
+        """더블클릭 시 — 첫 슬롯 포켓몬으로 좌측 리스트 선택."""
+        sel = rkl_tree.selection()
+        if not sel: return
+        en = rkl_tree.item(sel[0], "text")
+        npc = next((n for n in rkt_state.get("data", []) if n.get("name") == en), None)
+        if not npc: return
+        first_opts = npc.get("firstPokemon") or []
+        if first_opts:
+            first_en = first_opts[0].get("name", "")
+            _jump_to_pokemon_by_en(first_en)
+
+    rkl_tree.bind("<<TreeviewSelect>>", _on_rocket_select)
     rkl_tree.bind("<Double-Button-1>", _on_rocket_double)
+
+    # rkt_tab 안에서 라인업을 안내 라벨 바로 다음(대사 입력 위)에 배치
+    rkt_lineup_tab.pack(fill="both", expand=False, pady=(0, 8),
+                        before=rkt_phrase_row)
+    ttk.Separator(rkt_tab, orient="horizontal").pack(fill="x", pady=(0, 6),
+                                                     before=rkt_phrase_row)
 
     # 초기 로딩 (블록되지 않도록 try)
     try:
@@ -5285,10 +5298,6 @@ def run_gui(gm):
     # 다른 탭은 add 순서 그대로. insert 는 같은 widget 이면 자동 이동.
     try:
         notebook.insert(4, team_meta_tab)
-        # 로켓 라인업은 PvE 로켓 바로 뒤에 (현 순서:
-        # PvP×5, 타입(5), PvE 카운터(6), DPS(7), 로켓(8), 일정 시작…)
-        # → 로켓 라인업을 idx 9 로 옮김
-        notebook.insert(9, rkt_lineup_tab)
     except Exception:
         pass
 
