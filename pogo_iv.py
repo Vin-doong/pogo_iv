@@ -38,6 +38,7 @@ SCRAPEDUCK_RAIDS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/d
 SCRAPEDUCK_EVENTS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/events.json"
 SCRAPEDUCK_EGGS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/eggs.json"
 SCRAPEDUCK_RESEARCH_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/research.json"
+POGOMATE_RAIDS_URL = "https://pogomate.com/raids"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_GM = os.path.join(SCRIPT_DIR, "gamemaster.json")
@@ -48,6 +49,7 @@ CACHE_RAIDS = os.path.join(SCRIPT_DIR, "raids.json")
 CACHE_EVENTS = os.path.join(SCRIPT_DIR, "events.json")
 CACHE_EGGS = os.path.join(SCRIPT_DIR, "eggs.json")
 CACHE_RESEARCH = os.path.join(SCRIPT_DIR, "research.json")
+CACHE_KR_RAIDS = os.path.join(SCRIPT_DIR, "kr_raids.json")
 SPRITE_DIR = os.path.join(SCRIPT_DIR, "sprites")
 FAVORITES_PATH = os.path.join(SCRIPT_DIR, "favorites.json")
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
@@ -631,6 +633,158 @@ def load_research(force=False):
         return []
 
 
+# --- pogomate.com 한국 레이드 스크래퍼 (HTML 정규식 파싱) ---
+_TYPE_KO_TO_EN = {
+    "노말": "normal", "불꽃": "fire", "물": "water", "전기": "electric",
+    "풀": "grass", "얼음": "ice", "격투": "fighting", "독": "poison",
+    "땅": "ground", "비행": "flying", "에스퍼": "psychic", "벌레": "bug",
+    "바위": "rock", "고스트": "ghost", "드래곤": "dragon", "악": "dark",
+    "강철": "steel", "페어리": "fairy",
+}
+
+
+def _slug_to_en_name(slug):
+    """pogomate slug → 영문 종 이름 (ScrapedDuck name 호환).
+    예: 'glalie-mega' → 'Mega Glalie', 'tapu-bulu' → 'Tapu Bulu',
+        'charizard-megax' → 'Mega Charizard X'
+    """
+    s = slug
+    mega_x = mega_y = mega = shadow = False
+    if s.endswith("-megax"): s = s[:-6]; mega_x = True
+    elif s.endswith("-megay"): s = s[:-6]; mega_y = True
+    elif s.endswith("-mega"): s = s[:-5]; mega = True
+    elif s.endswith("-shadow"): s = s[:-7]; shadow = True
+    base = " ".join(p.capitalize() for p in s.split("-"))
+    if mega_x: return f"Mega {base} X"
+    if mega_y: return f"Mega {base} Y"
+    if mega:   return f"Mega {base}"
+    if shadow: return f"Shadow {base}"
+    return base
+
+
+def _parse_pogomate_raids_html(html):
+    """pogomate.com/raids HTML → 한국 활성 레이드 보스 리스트.
+    출력 형식은 ScrapedDuck raids.json 와 호환 + 추가 필드(_source, _korea_only, _period, _name_ko).
+    """
+    import re as _re
+    m = _re.search(r"현재 레이드 보스(.*?)예정된 레이드", html, _re.S)
+    if not m:
+        return []
+    section = m.group(1)
+    # <h3>전설 (5성)</h3> / <h3>메가</h3> / <h3>그림자</h3> 로 분할
+    parts = _re.split(r"<h3[^>]*>([^<]+)</h3>", section)
+    cat_tier_map = {
+        "전설": "5-Star Raids", "5성": "5-Star Raids",
+        "메가": "Mega Raids", "그림자": "Shadow Raids",
+        "엘리트": "Elite Raids", "1성": "1-Star Raids", "3성": "3-Star Raids",
+    }
+    results = []
+    for i in range(1, len(parts), 2):
+        cat = parts[i].strip()
+        cont = parts[i+1] if i+1 < len(parts) else ""
+        tier = None
+        for k, v in cat_tier_map.items():
+            if k in cat:
+                tier = v
+                break
+        if not tier:
+            continue
+        for am in _re.finditer(r'<a href="/raids/([^"]+)"[^>]*>(.*?)</a>',
+                               cont, _re.S):
+            slug = am.group(1)
+            body = am.group(2)
+            text = _re.sub(r"<[^>]+>", " ", body)
+            text = _re.sub(r"\s+", " ", text).strip()
+            en_name = _slug_to_en_name(slug)
+            # 한국명: text 의 첫 한글 토큰들 (영문 시작 전까지)
+            ko_m = _re.match(r"^([가-힣 ]+?)\s+[A-Za-z]", text)
+            name_ko = ko_m.group(1).strip() if ko_m else ""
+            # CP: "CP: 2,155 - 2,249"
+            cp_m = _re.search(r"CP:\s*([\d,]+)\s*-\s*([\d,]+)", text)
+            cp_min = int(cp_m.group(1).replace(",", "")) if cp_m else None
+            cp_max = int(cp_m.group(2).replace(",", "")) if cp_m else None
+            # 타입: 한글 타입 단어
+            types = []
+            for ko, en in _TYPE_KO_TO_EN.items():
+                if _re.search(rf"(?<![가-힣]){ko}(?![가-힣])", text):
+                    types.append({"name": en})
+            # 색이 다른 가능 여부
+            shiny = "색이 다른" in text
+            # 기간: "5/13(수) 10:00 ~ 5/20(수) 10:00"
+            period_m = _re.search(r"(\d+/\d+\([가-힣]\)[^~]+~[^<]+?\d+:\d+)", text)
+            period = period_m.group(1).strip() if period_m else ""
+            results.append({
+                "name": en_name,
+                "tier": tier,
+                "types": types,
+                "canBeShiny": shiny,
+                "combatPower": {
+                    "normal": {"min": cp_min, "max": cp_max} if cp_min else {}
+                },
+                "_source": "pogomate",
+                "_name_ko": name_ko,
+                "_period": period,
+                "_slug": slug,
+            })
+    return results
+
+
+def _kr_raids_downloader(dest):
+    """pogomate.com/raids 다운로드 → 파싱 → kr_raids.json 저장."""
+    req = urllib.request.Request(POGOMATE_RAIDS_URL,
+                                  headers={"User-Agent": "Mozilla/5.0 (pogo_iv.py)"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        html = resp.read().decode("utf-8", errors="replace")
+    parsed = _parse_pogomate_raids_html(html)
+    with open(dest, "w", encoding="utf-8") as f:
+        json.dump(parsed, f, ensure_ascii=False, indent=2)
+
+
+def load_kr_raids(force=False):
+    """한국 활성 레이드 보스 (pogomate.com 스크래핑, 1일 캐싱).
+    실패 시 빈 리스트 반환 (best-effort)."""
+    _ensure_file(CACHE_KR_RAIDS, _kr_raids_downloader,
+                 "한국 레이드 보스", 1, force)
+    if not os.path.exists(CACHE_KR_RAIDS):
+        return []
+    try:
+        with open(CACHE_KR_RAIDS, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"kr_raids.json 파싱 실패: {e}")
+        return []
+
+
+def load_combined_raids(force=False):
+    """LeekDuck(글로벌) + pogomate(한국) 합본.
+    중복(영문명+티어 같음)은 한 행에서 출처만 'global+kr'로 표기.
+    한국 전용은 _korea_only=True, 글로벌 전용은 _global_only=True 마크.
+    """
+    g = load_raid_bosses(force=force) or []
+    k = load_kr_raids(force=force) or []
+    # 키: 영문 종 이름만 (티어는 글로벌/한국이 다를 수 있음)
+    def _key(b):
+        return b.get("name", "")
+    g_keys = {_key(b) for b in g}
+    k_keys = {_key(b) for b in k}
+    merged = []
+    for b in g:
+        b2 = dict(b)
+        if _key(b) in k_keys:
+            b2["_source"] = "global+kr"
+        else:
+            b2["_source"] = "global"
+            b2["_global_only"] = True
+        merged.append(b2)
+    for b in k:
+        if _key(b) not in g_keys:
+            b2 = dict(b)
+            b2["_source"] = "kr"
+            b2["_korea_only"] = True
+            merged.append(b2)
+    return merged
+
+
 def refresh_all_data():
     """모든 시즌별 데이터 강제 재다운로드. gm 갱신 후 LEAGUES 재구성."""
     gm = load_gamemaster(force=True)
@@ -638,6 +792,7 @@ def refresh_all_data():
     load_korean_dex_map(force=True)
     load_move_ko_map(force=True)
     load_raid_bosses(force=True)
+    load_kr_raids(force=True)
     load_events(force=True)
     load_eggs(force=True)
     load_research(force=True)
@@ -649,7 +804,8 @@ def data_status():
     """[(label, path, age_days), ...] — 각 데이터 파일 현황."""
     items = [("게임마스터", CACHE_GM), ("한글 이름", CACHE_KO),
              ("기술 한글", CACHE_MOVE_NAMES),
-             ("레이드 보스", CACHE_RAIDS), ("이벤트", CACHE_EVENTS),
+             ("레이드(글로벌)", CACHE_RAIDS), ("레이드(한국)", CACHE_KR_RAIDS),
+             ("이벤트", CACHE_EVENTS),
              ("알 부화", CACHE_EGGS), ("리서치", CACHE_RESEARCH)]
     for lg in LEAGUES:
         c = lg.cap if lg.cap is not None else 10000
@@ -2691,7 +2847,7 @@ def run_gui(gm):
 
     raid_state = {"bosses": [], "current_boss": None, "current_weather": None}
     try:
-        raid_state["bosses"] = load_raid_bosses()
+        raid_state["bosses"] = load_combined_raids()
     except Exception as e:
         print(f"레이드 보스 로드 실패: {e}")
 
@@ -2960,7 +3116,7 @@ def run_gui(gm):
 
     def _reload_raids():
         try:
-            raid_state["bosses"] = load_raid_bosses(force=True)
+            raid_state["bosses"] = load_combined_raids(force=True)
         except Exception as e:
             messagebox.showerror("실패", f"갱신 실패: {e}")
             return
@@ -3525,7 +3681,7 @@ def run_gui(gm):
         _ranking_lru.clear()
         _ranking_lru_order.clear()
         try:
-            raid_state["bosses"] = load_raid_bosses(force=True)
+            raid_state["bosses"] = load_combined_raids(force=True)
             _populate_boss_combo()
         except Exception:
             pass
@@ -4012,10 +4168,10 @@ def run_gui(gm):
                command=lambda: _reload_raid_sched()).pack(side="right")
 
     ttk.Label(raid_sched_tab,
-              text="⚠ 데이터 출처: LeekDuck (글로벌 기준) — 한국 일정과 다를 수 있습니다. "
-                   "원본은 10분마다 갱신, 우리 캐시는 1일마다 자동 갱신. "
-                   "지금 새로 받으려면 [갱신] 버튼을 누르세요.",
-              font=("", 8), foreground="#a00",
+              text="ℹ 글로벌(LeekDuck) + 한국(pogomate.com) 통합 표시. "
+                   "출처 컬럼: 🌐 글로벌만 · 🇰🇷 한국만 · ✓ 양쪽 동일. "
+                   "양쪽 모두 1일마다 자동 갱신, 지금 받으려면 [갱신] 클릭.",
+              font=("", 8), foreground="#444",
               justify="left", wraplength=1000).pack(anchor="w", pady=(0, 4))
 
     raid_sched_frame = ttk.Frame(raid_sched_tab)
@@ -4023,26 +4179,29 @@ def run_gui(gm):
     raid_sched_scroll = ttk.Scrollbar(raid_sched_frame, orient="vertical")
     raid_sched_scroll.pack(side="right", fill="y")
     raid_sched_tree = ttk.Treeview(raid_sched_frame,
-                                   columns=("tier", "name", "types", "cp", "shiny"),
+                                   columns=("source", "tier", "name", "types", "cp", "shiny", "period"),
                                    show="headings", height=22, selectmode="browse",
                                    yscrollcommand=raid_sched_scroll.set)
-    for c, h, w in [("tier", "티어", 90), ("name", "포켓몬", 240),
-                    ("types", "타입", 140), ("cp", "CP 범위", 120),
-                    ("shiny", "색이다른", 70)]:
+    for c, h, w in [("source", "출처", 60), ("tier", "티어", 90),
+                    ("name", "포켓몬", 220), ("types", "타입", 110),
+                    ("cp", "CP 범위", 100), ("shiny", "색이다른", 70),
+                    ("period", "기간(한국)", 220)]:
         raid_sched_tree.heading(c, text=h,
                                 command=lambda col=c: _sort_tree(raid_sched_tree, col))
-        raid_sched_tree.column(c, width=w, anchor="w" if c == "name" else "center")
+        raid_sched_tree.column(c, width=w,
+                               anchor="w" if c in ("name", "period") else "center")
     raid_sched_tree.pack(side="left", fill="both", expand=True)
     raid_sched_scroll.config(command=raid_sched_tree.yview)
-    raid_sched_tree.tag_configure("legendary", background="#fff4e0")
-    raid_sched_tree.tag_configure("mega",      background="#f0e0ff")
-    raid_sched_tree.tag_configure("shadow",    background="#e0e0e0")
+    raid_sched_tree.tag_configure("legendary",  background="#fff4e0")
+    raid_sched_tree.tag_configure("mega",       background="#f0e0ff")
+    raid_sched_tree.tag_configure("shadow",     background="#e0e0e0")
+    raid_sched_tree.tag_configure("korea_only", background="#e0f0ff")  # 한국 한정
 
     def _reload_raid_sched():
         for r in raid_sched_tree.get_children():
             raid_sched_tree.delete(r)
         try:
-            bosses = load_raid_bosses(force=True)
+            bosses = load_combined_raids(force=True)
             raid_state["bosses"] = bosses
             _populate_raid_sched(bosses)
         except Exception as e:
@@ -4051,12 +4210,16 @@ def run_gui(gm):
     def _populate_raid_sched(bosses):
         order = {"5-star": 0, "Mega": 1, "Elite": 1, "Shadow": 2,
                  "3-star": 3, "1-star": 4}
+        # 출처 우선순위: 양쪽(✓) > 한국(🇰🇷) > 글로벌(🌐)
+        src_order = {"global+kr": 0, "kr": 1, "global": 2}
         def key(b):
             t = (b.get("tier") or "").lower()
+            t_rank = 9
             for k, v in order.items():
                 if k.lower() in t:
-                    return (v, b.get("name", ""))
-            return (9, b.get("name", ""))
+                    t_rank = v; break
+            return (src_order.get(b.get("_source", "global"), 9),
+                    t_rank, b.get("name", ""))
         for b in sorted(bosses, key=key):
             tier_raw = b.get("tier", "") or ""
             tl = tier_raw.lower()
@@ -4068,8 +4231,14 @@ def run_gui(gm):
             elif "1-star" in tl: tier_ko, tag = "1★", ""
             else: tier_ko, tag = tier_raw, ""
 
+            src = b.get("_source", "global")
+            if src == "global+kr": src_label = "✓"
+            elif src == "kr":      src_label = "🇰🇷"; tag = "korea_only"
+            else:                  src_label = "🌐"
+
             en_name = b.get("name", "?")
-            ko = _en_to_display(en_name)
+            # 한국 데이터에 한국명이 있으면 우선 사용
+            ko = b.get("_name_ko") or _en_to_display(en_name)
             types_raw = b.get("types", []) or []
             type_names = [(t.get("name") if isinstance(t, dict) else t) or "" for t in types_raw]
             type_str = " · ".join(TYPE_KO.get(n.lower(), n) for n in type_names if n)
@@ -4079,8 +4248,10 @@ def run_gui(gm):
             cp_max = normal.get("max") or cp.get("max") or "-"
             cp_str = f"{cp_min}~{cp_max}" if cp_min != "-" else "-"
             shiny = "○" if b.get("canBeShiny") else ""
+            period = b.get("_period", "")
             raid_sched_tree.insert("", "end",
-                                   values=(tier_ko, ko, type_str, cp_str, shiny),
+                                   values=(src_label, tier_ko, ko, type_str,
+                                           cp_str, shiny, period),
                                    tags=(tag,) if tag else (),
                                    text=en_name)
 
