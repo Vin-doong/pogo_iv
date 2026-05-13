@@ -2906,6 +2906,15 @@ def run_gui(gm):
         ttk.Checkbutton(raid_filter_row, text=txt, variable=var,
                         command=lambda: refresh_counters()).pack(side="left", padx=(0, 8))
 
+    ttk.Label(raid_filter_row, text="  표시:", font=("", 9), foreground="#555"
+              ).pack(side="left", padx=(8, 4))
+    raid_topn_var = tk.StringVar(value="20")
+    raid_topn_combo = ttk.Combobox(raid_filter_row, textvariable=raid_topn_var,
+                                   values=["20", "50", "100", "200", "전체"],
+                                   width=6, state="readonly")
+    raid_topn_combo.pack(side="left")
+    raid_topn_combo.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
+
     # 카운터 테이블
     raid_table_frame = ttk.Frame(raid_tab)
     raid_table_frame.pack(fill="both", expand=True)
@@ -3015,8 +3024,12 @@ def run_gui(gm):
             atk_lv = float(raid_lv_var.get())
         except ValueError:
             atk_lv = 50.0
+        try:
+            topn = 10000 if raid_topn_var.get() == "전체" else int(raid_topn_var.get())
+        except ValueError:
+            topn = 20
         cnt = top_counters(
-            boss_p, state["gm"], moves_by_id, n=20,
+            boss_p, state["gm"], moves_by_id, n=topn,
             weather=weather,
             include_shadow=inc_shadow_var.get(),
             include_mega=inc_mega_var.get(),
