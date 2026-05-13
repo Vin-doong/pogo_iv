@@ -3587,7 +3587,8 @@ def run_gui(gm):
 
     ttk.Label(team_meta_tab,
               text="PvPoke 메타 팀 — 8개 역할 슬롯과 각 역할의 추천 포켓몬·무브셋. "
-                   "더블클릭 시 좌측 리스트 선택 + PvP 분석으로 이동.",
+                   "더블클릭 시 좌측 리스트 선택 + PvP 분석으로 이동. "
+                   "무브 prefix: ★ 엘리트 TM · 🎉 커뮤니티 데이 · ⚔ 레이드 데이",
               font=("", 9), foreground="#555",
               justify="left", wraplength=1000).pack(anchor="w", pady=(0, 6))
 
@@ -3650,6 +3651,22 @@ def run_gui(gm):
                            values=("", "(데이터 없음)", "", "", "", "", ""),
                            tags=("slot_head",))
             return
+        # 무브 획득 표시용 sid → gamemaster pokemon 인덱스
+        gm_by_sid = {p.get("speciesId"): p for p in state["gm"].get("pokemon", [])}
+
+        def _move_with_acq(gm_p, move_id, elite_set):
+            """무브 한글명 + 획득 카테고리 prefix (★/🎉/⚔)."""
+            if not move_id:
+                return ""
+            name = prettify_move(move_id, move_ko_map)
+            if not gm_p:
+                return name
+            acq = move_acquisition(gm_p, move_id, elite_set)
+            if acq == "elite":  return f"★ {name}"
+            if acq == "cd":     return f"🎉 {name}"
+            if acq == "raid":   return f"⚔ {name}"
+            return name
+
         # PvPoke gamemaster 의 speciesId → 한글 display
         for idx, slot in enumerate(slots, start=1):
             role_en = slot.get("slot", "?")
@@ -3674,8 +3691,10 @@ def run_gui(gm):
             for p in sorted(poks, key=lambda x: -x.get("weight", 0)):
                 sid = p.get("speciesId", "")
                 disp = sid_to_display.get(sid, sid)
-                fast = prettify_move(p.get("fastMove", ""), move_ko_map)
-                charged = " / ".join(prettify_move(m, move_ko_map)
+                gm_p = gm_by_sid.get(sid)
+                elite_set = set(gm_p.get("eliteMoves") or []) if gm_p else set()
+                fast = _move_with_acq(gm_p, p.get("fastMove", ""), elite_set)
+                charged = " / ".join(_move_with_acq(gm_p, m, elite_set)
                                      for m in (p.get("chargedMoves") or [])[:2])
                 w = p.get("weight", 0)
                 pct = f"{w/total_w*100:.0f}%"
