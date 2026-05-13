@@ -1,6 +1,7 @@
 # 런타임 캐시 (PvPoke 시즌 데이터 / PokeAPI CSV / Showdown sprite) — 첫 실행 시 자동 다운로드
 gamemaster.json
 rankings-*.json
+team_meta-*.json
 korean_names.csv
 moves.csv
 move_names.csv
