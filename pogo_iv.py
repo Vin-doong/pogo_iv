@@ -2867,14 +2867,10 @@ def run_gui(gm):
                                           on_select=lambda: refresh_counters(), width=14)
     weather_combo.pack(side="left", padx=(6, 16))
 
-    ttk.Label(raid_top, text="모드", font=("", 10, "bold")).pack(side="left")
+    # boss_mode_var: 보스가 일반 레이드(raid) 인지 맥스 배틀(max) 인지.
+    # 현재는 보스 데이터(raid_state)가 일반 레이드 보스만 제공하므로 항상 'raid' 고정.
+    # 향후 다이맥스 보스 데이터가 추가되면 라디오 UI 복원 가능.
     boss_mode_var = tk.StringVar(value="raid")
-    ttk.Radiobutton(raid_top, text="일반 레이드", variable=boss_mode_var,
-                    value="raid", command=lambda: refresh_counters()
-                    ).pack(side="left", padx=(6, 2))
-    ttk.Radiobutton(raid_top, text="맥스 배틀", variable=boss_mode_var,
-                    value="max", command=lambda: refresh_counters()
-                    ).pack(side="left", padx=(0, 16))
 
     ttk.Label(raid_top, text="공격자 Lv", font=("", 10, "bold")).pack(side="left", padx=(0, 4))
     raid_lv_var = tk.StringVar(value="50")
@@ -3050,8 +3046,8 @@ def run_gui(gm):
             raid_lineup_var.set("")
         else:
             raid_status_var.set(
-                f"• {len(cnt)}마리 표시 · 모드={'맥스 배틀' if is_max_mode else '일반 레이드'} · "
-                f"날씨={weather_var.get()} · Lv{raid_lv_var.get()}/15·15·15 가정"
+                f"• {len(cnt)}마리 표시 · 날씨={weather_var.get()} · "
+                f"Lv{raid_lv_var.get()}/15·15·15 가정"
             )
             # 6마리 라인업 클리어 시간 추정
             # 보스 HP: 일반 레이드 5성≈15000, 맥스≈100000 (대략)
