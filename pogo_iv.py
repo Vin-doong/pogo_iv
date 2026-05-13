@@ -3902,8 +3902,9 @@ def run_gui(gm):
 
             en_name = b.get("name", "?")
             ko = _en_to_display(en_name)
-            types = b.get("types", []) or []
-            type_str = " · ".join(TYPE_KO.get(t.lower(), t) for t in types)
+            types_raw = b.get("types", []) or []
+            type_names = [(t.get("name") if isinstance(t, dict) else t) or "" for t in types_raw]
+            type_str = " · ".join(TYPE_KO.get(n.lower(), n) for n in type_names if n)
             cp = b.get("combatPower", {}) or {}
             normal = cp.get("normal", {}) or {}
             cp_min = normal.get("min") or cp.get("min") or "-"
