@@ -1055,49 +1055,6 @@ WEATHER_KO = {
     "none": "(없음)",
 }
 
-# Pokemon GO 맥스 배틀 / 파워스폿 사용 가능 종 (2026-04 기준)
-# PokeMiners GAME_MASTER 의 BREAD_POKEMON_SCALING_SETTINGS (실제 배포된 풀) 기반.
-# (PvPoke speciesId, has_gmax_form). 진화 전 단계는 1성 맥스, 최종진화는 3-6성 맥스 보스.
-DYNAMAX_POOL = [
-    # ── Gen 1 ─────────────────────────────────────────────────────────
-    ("bulbasaur",   False), ("ivysaur",     False), ("venusaur",    True),
-    ("charmander",  False), ("charmeleon",  False), ("charizard",   True),
-    ("squirtle",    False), ("wartortle",   False), ("blastoise",   True),
-    ("caterpie",    False), ("metapod",     False), ("butterfree",  True),
-    ("krabby",      False), ("kingler",     True),
-    ("machop",      False), ("machoke",     False), ("machamp",     True),
-    ("gastly",      False), ("haunter",     False), ("gengar",      True),
-    ("chansey",     False),
-    ("lapras",      True),
-    ("snorlax",     True),
-    # 1세대 전설 새
-    ("articuno",    False), ("zapdos",      False), ("moltres",     False),
-    # ── Gen 2 — 전설 비스트 ──────────────────────────────────────────
-    ("raikou",      False), ("entei",       False), ("suicune",     False),
-    # ── Gen 3 — 메탕 라인 ────────────────────────────────────────────
-    ("beldum",      False), ("metang",      False), ("metagross",   False),
-    # ── Gen 5 ─────────────────────────────────────────────────────────
-    ("pidove",      False), ("tranquill",   False), ("unfezant",    False),
-    ("drilbur",     False), ("excadrill",   False),
-    ("darumaka",    False), ("darmanitan_standard", False),
-    ("cryogonal",   False),
-    # ── Gen 7 ─────────────────────────────────────────────────────────
-    ("passimian",   False),
-    # ── Gen 8 (갈라르) ───────────────────────────────────────────────
-    ("skwovet",     False), ("greedent",    False),
-    ("wooloo",      False), ("dubwool",     False),
-    ("grookey",     False), ("thwackey",    False), ("rillaboom",   True),
-    ("scorbunny",   False), ("raboot",      False), ("cinderace",   True),
-    ("sobble",      False), ("drizzile",    False), ("inteleon",    True),
-    ("toxel",       False), ("toxtricity",  True),
-    ("falinks",     False),
-    ("kubfu",       False),
-    ("urshifu_single_strike", True),  # 일격
-    ("urshifu_rapid_strike",  True),  # 연격
-    # ── Special ──────────────────────────────────────────────────────
-    ("eternatus_eternamax", False),  # 6성 전용 보스
-]
-
 # 로켓단 조무래기 배틀 전 대사 → 타입 매핑 (한국 PoGO 공식 대사)
 # 출처: namu.wiki / poketory.com 교차 검증
 # 키워드 substring 매치로 타입 추정 (구두점/띄어쓰기 무관). 매칭 우선순위는 정의 순서.
@@ -1148,19 +1105,6 @@ def find_grunt_type(phrase):
             return ("special", None)
     return (None, None)
 
-
-# 18 타입 → Max Move 한글명 (Sword/Shield 한국어판 기준)
-MAX_MOVE_KO = {
-    "normal":   "러시",     "fire":     "플레어",
-    "water":    "워터",     "electric": "선더",
-    "grass":    "플랜츠",   "ice":      "블리자드",
-    "fighting": "너클",     "poison":   "포이즌",
-    "ground":   "어스",     "flying":   "에어",
-    "psychic":  "마인드",   "bug":      "버그",
-    "rock":     "록",       "ghost":    "고스트",
-    "dragon":   "드래곤",   "dark":     "다크",
-    "steel":    "스틸",     "fairy":    "페어리",
-}
 
 # ScrapedDuck 의 보스 이름 → PvPoke speciesId 변환 규칙
 _BOSS_NAME_PREFIXES = [
@@ -3298,152 +3242,187 @@ def run_gui(gm):
     # dps_target / dps_weather 콤보는 make_searchable_combo 가 이미 바인딩
     dps_lv_combo.bind("<<ComboboxSelected>>", lambda e: refresh_pve_dps())
 
-    # --- Tab 8: PvE 다이맥스 도감 ---
+    # --- Tab 8: PvE 다이맥스 일정 ---
+    # ScrapedDuck events.json 에서 다이맥스/거다이맥스 이벤트만 필터링
+    # events_state 는 이벤트 탭에서도 공유. 다이맥스 탭이 먼저 참조하므로 여기서 미리 초기화.
+    events_state = {"data": [], "filter": "all"}
+    try:
+        events_state["data"] = load_events()
+    except Exception as e:
+        print(f"이벤트 사전 로드 실패: {e}")
+
     dmax_tab = ttk.Frame(notebook, padding=(8, 8))
     notebook.add(dmax_tab, text="  PvE 다이맥스  ")
 
     ttk.Label(dmax_tab,
-              text="포켓몬 GO 의 다이맥스/거다이맥스 가능 종 목록 (2026-04 기준, 손큐레이팅).\n"
-                   "맥스 무브: 18개 타입별 표준 무브 (각 타입의 속공 무브 → 동일 타입 맥스 무브로 강화).\n"
-                   "거다이맥스(GMax) 가능 종은 G열에 ★ 표시.",
-              font=("", 9), foreground="#555", justify="left"
-              ).pack(anchor="w", pady=(0, 6))
+              text="다이맥스/거다이맥스 일정 (Max Monday · 거다이맥스 데이 등). "
+                   "더블클릭 시 보스로 PvE 카운터 탭 이동 (맥스 배틀 모드).",
+              font=("", 9), foreground="#555",
+              justify="left", wraplength=1100).pack(anchor="w", pady=(0, 6))
+
+    dmax_top = ttk.Frame(dmax_tab)
+    dmax_top.pack(fill="x", pady=(0, 6))
+    dmax_filter_var = tk.StringVar(value="진행/예정")
+    ttk.Label(dmax_top, text="필터:", font=("", 9)).pack(side="left")
+    dmax_filter_combo = ttk.Combobox(dmax_top, textvariable=dmax_filter_var,
+                                     values=["진행/예정", "진행 중", "예정", "전체"],
+                                     width=10, state="readonly")
+    dmax_filter_combo.pack(side="left", padx=(4, 8))
+    dmax_filter_combo.bind("<<ComboboxSelected>>", lambda e: refresh_dynamax())
+
+    ttk.Button(dmax_top, text="갱신", width=8,
+               command=lambda: _reload_dmax_events()).pack(side="right")
+    dmax_fresh_lbl = ttk.Label(dmax_top, text="", font=("", 8))
+    dmax_fresh_lbl.pack(side="right", padx=(0, 10))
 
     dmax_table_frame = ttk.Frame(dmax_tab)
     dmax_table_frame.pack(fill="both", expand=True)
     dmax_scroll = ttk.Scrollbar(dmax_table_frame, orient="vertical")
     dmax_scroll.pack(side="right", fill="y")
-    dmax_cols = ("name", "types", "gmax", "atk", "def", "hp", "weak", "best_max")
-    dmax_labels = ["포켓몬", "타입", "G", "공", "방", "체", "주요 약점", "최적 맥스 무브"]
-    dmax_widths = [150, 110, 30, 50, 50, 50, 200, 160]
+    dmax_cols = ("start", "end", "kind", "boss_ko", "boss_en", "gmax", "extra")
+    dmax_labels = ["시작", "종료", "종류", "보스(한글)", "보스(영문)", "거다이맥스", "비고"]
+    dmax_widths = [100, 100, 130, 150, 150, 70, 300]
     dmax_tree = ttk.Treeview(dmax_table_frame, columns=dmax_cols, show="headings",
-                             yscrollcommand=dmax_scroll.set, height=14)
+                             yscrollcommand=dmax_scroll.set, height=20,
+                             selectmode="browse")
     for c, l, w in zip(dmax_cols, dmax_labels, dmax_widths):
-        dmax_tree.heading(c, text=l)
-        dmax_tree.column(c, width=w, anchor="w" if c in ("name", "best_max", "weak") else "center")
+        dmax_tree.heading(c, text=l,
+                          command=lambda col=c: _sort_tree(dmax_tree, col))
+        dmax_tree.column(c, width=w,
+                         anchor="w" if c in ("boss_ko", "boss_en", "extra") else "center")
     dmax_tree.pack(side="left", fill="both", expand=True)
     dmax_scroll.config(command=dmax_tree.yview)
+    dmax_tree.tag_configure("active",   background="#e0ffe0")
+    dmax_tree.tag_configure("soon",     background="#fffadf")
+    dmax_tree.tag_configure("past",     foreground="#999")
+    dmax_tree.tag_configure("gigantamax", background="#ffe0f5")
 
-    dmax_status_var = tk.StringVar(value="")
-    ttk.Label(dmax_tab, textvariable=dmax_status_var,
-              font=("", 8), foreground="#666").pack(anchor="w", pady=(4, 0))
+    _DMAX_KIND_KO = {
+        "max-mondays":      "Max Monday",
+        "max-battle-day":   "맥스 배틀 데이",
+        "max-battle-weekend": "맥스 배틀 주말",
+        "gigantamax":       "거다이맥스",
+    }
 
-    # 하단 상세 패널 — 선택된 종의 카운터 TOP 6 표시
-    dmax_detail_frame = ttk.LabelFrame(dmax_tab, text=" 선택 종 카운터 TOP 6 ",
-                                       padding=(6, 4))
-    dmax_detail_frame.pack(fill="x", pady=(8, 0))
-    dmax_detail_var = tk.StringVar(
-        value="↑ 위 표에서 한 종을 선택하면 카운터 TOP 6 가 여기 표시됩니다  ·  "
-              "더블클릭 시 PvE 카운터 탭으로 전체 분석"
-    )
-    ttk.Label(dmax_detail_frame, textvariable=dmax_detail_var,
-              font=("", 9), foreground="#444", justify="left", wraplength=1100
-              ).pack(anchor="w")
+    def _classify_dmax_event(ev):
+        """이벤트 → (종류 한글, 보스 영문명, 거다이맥스 여부) 추출."""
+        import re as _re
+        et = (ev.get("eventType") or "").lower()
+        name = ev.get("name", "") or ""
+        nl = name.lower()
+        gmax = "gigantamax" in nl or "거다이맥스" in name
+        # 종류 결정
+        if et == "max-mondays":
+            kind = "Max Monday"
+        elif "max battle day" in nl or "맥스 배틀 데이" in name:
+            kind = "맥스 배틀 데이"
+        elif "max battle weekend" in nl or "맥스 배틀 주말" in name:
+            kind = "맥스 배틀 주말"
+        elif gmax:
+            kind = "거다이맥스"
+        elif "dynamax" in nl or "max battle" in nl or "맥스" in name:
+            kind = _DMAX_KIND_KO.get(et, et) or "다이맥스"
+        else:
+            kind = None  # 다이맥스 아님
+        # 보스 추출: "Dynamax X during Max Monday" / "Gigantamax X Max Battle Day" 등
+        boss_en = ""
+        for prefix in ("Gigantamax", "Dynamax"):
+            m = _re.search(rf"{prefix}\s+([A-Z][A-Za-z\-]+(?:\s+[A-Z][A-Za-z\-]+)*?)(?=\s+(?:during|Max|in|$))",
+                           name)
+            if m:
+                boss_en = m.group(1).strip()
+                break
+        if not boss_en:
+            m = _re.search(r"^(Gigantamax|Dynamax)\s+([A-Z][A-Za-z\-]+)", name)
+            if m:
+                boss_en = m.group(2).strip()
+        return kind, boss_en, gmax
 
-    dmax_sid_by_iid = {}  # tree iid → sid
-
-    def _weakness_str(types):
-        """타입 리스트 → '전기(2.6×) 격투(1.6×) 비행(1.6×)' 형태 약점 문자열."""
-        ww = {}
-        for atk in TYPES_ORDER:
-            mult = 1.0
-            for d in types:
-                mult *= TYPE_CHART.get(atk, {}).get(d, 1.0)
-            if mult > 1.05:
-                ww[atk] = mult
-        sorted_w = sorted(ww.items(), key=lambda x: -x[1])
-        return " ".join(f"{TYPE_KO[t]}({m:.2f}×)" for t, m in sorted_w[:4])
+    def _filter_dmax_events():
+        from datetime import datetime
+        now = datetime.now()
+        filt = dmax_filter_var.get()
+        rows = []
+        for ev in events_state.get("data", []):
+            kind, boss_en, gmax = _classify_dmax_event(ev)
+            if not kind:
+                continue
+            # 상태
+            try:
+                start_dt = datetime.fromisoformat(
+                    (ev.get("start") or "").replace("Z","").split(".")[0])
+            except Exception:
+                start_dt = None
+            try:
+                end_dt = datetime.fromisoformat(
+                    (ev.get("end") or "").replace("Z","").split(".")[0])
+            except Exception:
+                end_dt = None
+            if start_dt and end_dt:
+                if end_dt < now: status = "past"
+                elif start_dt <= now <= end_dt: status = "active"
+                else: status = "soon"
+            elif start_dt:
+                status = "active" if start_dt <= now else "soon"
+            else:
+                status = "active"
+            if filt == "진행 중" and status != "active": continue
+            if filt == "예정" and status != "soon": continue
+            if filt == "진행/예정" and status == "past": continue
+            rows.append((start_dt or datetime.max, ev, status, kind, boss_en, gmax))
+        rows.sort(key=lambda x: x[0])
+        return rows
 
     def refresh_dynamax():
         for r in dmax_tree.get_children():
             dmax_tree.delete(r)
-        dmax_sid_by_iid.clear()
-        cnt = 0
-        for sid, gmax in DYNAMAX_POOL:
-            p = next((x for x in state["gm"]["pokemon"] if x.get("speciesId") == sid), None)
-            if not p:
-                continue
-            disp = sid_to_display.get(sid, sid)
-            types = [t for t in p.get("types", []) if t and t != "none"]
-            type_str = " · ".join(TYPE_KO.get(t, t) for t in types)
-            bs = p.get("baseStats", {})
-            best_max = "맥스가드 / 맥스스피릿" if not types else \
-                       f"맥스{MAX_MOVE_KO.get(types[0], '?')}"
-            weak_str = _weakness_str(types) if types else "—"
-            iid = dmax_tree.insert("", "end", values=(
-                disp, type_str, "★" if gmax else "",
-                bs.get("atk", "—"), bs.get("def", "—"), bs.get("hp", "—"),
-                weak_str,
-                best_max,
-            ))
-            dmax_sid_by_iid[iid] = sid
-            cnt += 1
-        dmax_status_var.set(
-            f"• 총 {cnt}/{len(DYNAMAX_POOL)} 종 · ★=거다이맥스(GMax) · "
-            "데이터: PokeMiners 기반 큐레이션 · "
-            "행 클릭 → 카운터 미리보기 / 더블클릭 → PvE 카운터 탭"
-        )
-        dmax_detail_var.set(
-            "↑ 위 표에서 한 종을 선택하면 카운터 TOP 6 가 여기 표시됩니다  ·  "
-            "더블클릭 시 PvE 카운터 탭으로 전체 분석"
-        )
+        for _, ev, status, kind, boss_en, gmax in _filter_dmax_events():
+            boss_ko = _en_to_display(boss_en) if boss_en else "-"
+            extra = ev.get("name", "") or ""
+            tags = (status,)
+            if gmax: tags = tags + ("gigantamax",)
+            dmax_tree.insert("", "end",
+                             values=(_format_iso_short(ev.get("start")),
+                                     _format_iso_short(ev.get("end")),
+                                     kind,
+                                     boss_ko or "-",
+                                     boss_en or "-",
+                                     "★" if gmax else "",
+                                     extra),
+                             tags=tags,
+                             text=boss_en or "")
+        # 신선도
+        txt, c = _freshness_label(CACHE_EVENTS, "갱신: ")
+        dmax_fresh_lbl.configure(text=txt, foreground=c)
 
-    def _on_dmax_select(_e=None):
-        sel = dmax_tree.selection()
-        if not sel:
-            return
-        sid = dmax_sid_by_iid.get(sel[0])
-        if not sid:
-            return
-        p = next((x for x in state["gm"]["pokemon"] if x.get("speciesId") == sid), None)
-        if not p:
-            return
-        disp = sid_to_display.get(sid, sid)
-        # 카운터 계산 (맥스 배틀 가정 — boss cpm 1.0, 더 단단한 보스)
-        dmax_detail_var.set(f"⏳ {disp} 카운터 계산 중...")
-        dmax_detail_frame.update_idletasks()
+    def _reload_dmax_events():
         try:
-            cnt = top_counters(
-                p, state["gm"], moves_by_id, n=6,
-                weather=None,
-                include_shadow=True, include_mega=True, include_legendary=True,
-                force_boss_cpm=1.0,  # 맥스 배틀 보스 가정
-                attacker_level=50.0,
-            )
+            events_state["data"] = load_events(force=True)
         except Exception as e:
-            dmax_detail_var.set(f"⚠ 계산 실패: {e}")
-            return
-        if not cnt:
-            dmax_detail_var.set(f"{disp}: 카운터 계산 결과 없음")
-            return
-        lines = [f"▶ {disp} (맥스 배틀 보스 가정) 카운터 TOP 6:"]
-        for i, c in enumerate(cnt, 1):
-            cd = sid_to_display.get(c["sid"], c["sid"])
-            f_ko = move_ko(c["fast_id"])
-            ch_ko = move_ko(c["charged_id"])
-            lines.append(f"  {i}. {cd}  —  {f_ko} + {ch_ko}  (eDPS {c['edps']:.1f})")
-        dmax_detail_var.set("\n".join(lines))
-
-    dmax_tree.bind("<<TreeviewSelect>>", _on_dmax_select)
+            print(f"이벤트 갱신 실패: {e}")
+        refresh_dynamax()
 
     def _on_dmax_double(_e=None):
         sel = dmax_tree.selection()
-        if not sel:
+        if not sel: return
+        boss_en = dmax_tree.item(sel[0], "text")
+        if not boss_en:
             return
-        sid = dmax_sid_by_iid.get(sel[0])
-        if not sid:
-            return
-        # 좌측 listbox 에서 해당 sid 찾아 선택 + use_selected 모드 ON + PvE 카운터 탭으로
-        target_disp = sid_to_display.get(sid)
-        if target_disp:
-            for idx in range(listbox.size()):
-                if strip_star(listbox.get(idx)) == target_disp:
-                    listbox.selection_clear(0, tk.END)
-                    listbox.selection_set(idx)
-                    listbox.activate(idx)
-                    listbox.see(idx)
-                    break
+        # 좌측 listbox 선택 + PvE 카운터 탭으로 + 맥스 배틀 모드
+        p = find_boss_pokemon(boss_en, state["gm"])
+        if p:
+            target_disp = sid_to_display.get(p["speciesId"])
+            if target_disp:
+                for idx in range(listbox.size()):
+                    if strip_star(listbox.get(idx)) == target_disp:
+                        listbox.selection_clear(0, tk.END)
+                        listbox.selection_set(idx)
+                        listbox.activate(idx)
+                        listbox.see(idx)
+                        break
         use_selected_var.set(True)
+        try: boss_mode_var.set("max")
+        except Exception: pass
         notebook.select(raid_tab)
         refresh_counters()
 
@@ -4094,7 +4073,7 @@ def run_gui(gm):
     events_tab = ttk.Frame(notebook, padding=(8, 8))
     notebook.add(events_tab, text="  이벤트  ")
 
-    events_state = {"data": [], "filter": "all"}
+    # events_state 는 다이맥스 탭에서 이미 초기화·로드됨
 
     ev_top = ttk.Frame(events_tab)
     ev_top.pack(fill="x", pady=(0, 6))
