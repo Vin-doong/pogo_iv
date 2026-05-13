@@ -444,10 +444,11 @@ def load_league_rankings(cup_id, cap, force=False):
 
 def load_raid_bosses(force=False):
     """ScrapedDuck (LeekDuck mirror) 의 현재 레이드 보스 목록.
-    각 항목: {name, tier, types, image, ...}. 12h 마다 자동 갱신.
+    각 항목: {name, tier, types, image, ...}. 1일마다 자동 갱신.
+    (원본 ScrapedDuck 는 10분마다 LeekDuck 스크래핑 — 글로벌 기준)
     """
     _ensure_file(CACHE_RAIDS, lambda p: _download(SCRAPEDUCK_RAIDS_URL, p),
-                 "현재 레이드 보스", DATA_MAX_AGE_DAYS, force)
+                 "현재 레이드 보스", 1, force)
     if not os.path.exists(CACHE_RAIDS):
         return []
     try:
@@ -484,6 +485,136 @@ def load_eggs(force=False):
     except Exception as e:
         print(f"eggs.json 파싱 실패: {e}")
         return []
+
+
+# --- 필드 리서치 영문 → 한글 번역기 (정규식 패턴 매칭) ---
+import re as _re_research
+
+_RESEARCH_TYPE_KO = {
+    "normal": "노말", "fire": "불꽃", "water": "물", "electric": "전기",
+    "grass": "풀", "ice": "얼음", "fighting": "격투", "poison": "독",
+    "ground": "땅", "flying": "비행", "psychic": "에스퍼", "bug": "벌레",
+    "rock": "바위", "ghost": "고스트", "dragon": "드래곤", "dark": "악",
+    "steel": "강철", "fairy": "페어리",
+}
+
+def _t_type(en):
+    return _RESEARCH_TYPE_KO.get(en.lower(), en)
+
+# 매칭 우선순위 순서 (구체적 패턴 먼저)
+_RESEARCH_RULES = [
+    # 스로우 — in a row 패턴 먼저
+    (r"^Make (\d+) Great Curveball Throws? in a row$",
+     lambda m: f"Great 커브볼 스로우 {m.group(1)}회 연속"),
+    (r"^Make (\d+) Excellent Throws? in a row$",
+     lambda m: f"Excellent 스로우 {m.group(1)}회 연속"),
+    (r"^Make (\d+) Great Throws? in a row$",
+     lambda m: f"Great 스로우 {m.group(1)}회 연속"),
+    (r"^Make (\d+) Nice Throws? in a row$",
+     lambda m: f"Nice 스로우 {m.group(1)}회 연속"),
+    (r"^Make (\d+) Curveball Throws? in a row$",
+     lambda m: f"커브볼 스로우 {m.group(1)}회 연속"),
+    (r"^Make (\d+) Throws? in a row$",
+     lambda m: f"스로우 {m.group(1)}회 연속"),
+    # 스로우 — 단순
+    (r"^Make (\d+) Great Curveball Throws?$",
+     lambda m: f"Great 커브볼 스로우 {m.group(1)}회"),
+    (r"^Make (\d+) Excellent Throws?$",
+     lambda m: f"Excellent 스로우 {m.group(1)}회"),
+    (r"^Make (\d+) Great Throws?$",
+     lambda m: f"Great 스로우 {m.group(1)}회"),
+    (r"^Make (\d+) Nice Throws?$",
+     lambda m: f"Nice 스로우 {m.group(1)}회"),
+    (r"^Make (\d+) Curveball Throws?$",
+     lambda m: f"커브볼 스로우 {m.group(1)}회"),
+    # 포획
+    (r"^Catch (\d+) Pokémon with Weather Boost$",
+     lambda m: f"날씨 부스트 포켓몬 {m.group(1)}마리 잡기"),
+    (r"^Catch (\d+) different species of Pokémon$",
+     lambda m: f"포켓몬 {m.group(1)}종류 잡기"),
+    (r"^Catch (\d+) ([A-Z][a-z]+)-type Pokémon$",
+     lambda m: f"{_t_type(m.group(2))} 타입 포켓몬 {m.group(1)}마리 잡기"),
+    (r"^Catch a ([A-Z][a-z]+)-type Pokémon$",
+     lambda m: f"{_t_type(m.group(1))} 타입 포켓몬 1마리 잡기"),
+    (r"^Catch (\d+) Pokémon$",
+     lambda m: f"포켓몬 {m.group(1)}마리 잡기"),
+    (r"^Catch a Pokémon$",
+     lambda m: "포켓몬 1마리 잡기"),
+    # 포켓스톱/체육관
+    (r"^Spin (\d+) PokéStops? or Gyms?$",
+     lambda m: f"포켓스톱/체육관 {m.group(1)}개 돌리기"),
+    (r"^Spin a PokéStop or Gym$",
+     lambda m: "포켓스톱/체육관 1개 돌리기"),
+    # 강화
+    (r"^Power up Pokémon (\d+) times?$",
+     lambda m: f"포켓몬 {m.group(1)}회 강화"),
+    # 진화/교환/스냅
+    (r"^Evolve (\d+) Pokémon$",
+     lambda m: f"포켓몬 {m.group(1)}마리 진화"),
+    (r"^Evolve a Pokémon$",
+     lambda m: "포켓몬 1마리 진화"),
+    (r"^Trade (\d+) Pokémon$",
+     lambda m: f"포켓몬 {m.group(1)}마리 교환"),
+    (r"^Trade a Pokémon$",
+     lambda m: "포켓몬 1마리 교환"),
+    (r"^Take a snapshot of a wild Pokémon$",
+     lambda m: "야생 포켓몬 스냅 촬영"),
+    (r"^Take (\d+) snapshots? of wild Pokémon$",
+     lambda m: f"야생 포켓몬 스냅 {m.group(1)}장 촬영"),
+    # 알/사탕/걷기
+    (r"^Hatch (\d+) Eggs?$",
+     lambda m: f"알 {m.group(1)}개 부화"),
+    (r"^Hatch an Egg$",
+     lambda m: "알 1개 부화"),
+    (r"^Explore (\d+(?:\.\d+)?) km$",
+     lambda m: f"{m.group(1)}km 탐험"),
+    (r"^Walk (\d+(?:\.\d+)?) km$",
+     lambda m: f"{m.group(1)}km 걷기"),
+    (r"^Earn (\d+) Cand(?:y|ies) walking with your buddy$",
+     lambda m: f"버디와 함께 걸어 사탕 {m.group(1)}개 획득"),
+    # 선물/베리
+    (r"^Send (\d+) Gifts? and add a sticker to each$",
+     lambda m: f"스티커 붙인 선물 {m.group(1)}개 보내기"),
+    (r"^Send (\d+) Gifts?$",
+     lambda m: f"선물 {m.group(1)}개 보내기"),
+    (r"^Use (\d+) Berr(?:y|ies) to help catch Pokémon$",
+     lambda m: f"포획에 베리 {m.group(1)}개 사용"),
+    # 레이드
+    (r"^Win (\d+) raids?$",
+     lambda m: f"레이드 {m.group(1)}회 승리"),
+    (r"^Win a raid$",
+     lambda m: "레이드 1회 승리"),
+    (r"^Win a three-star raid or higher$",
+     lambda m: "3성 이상 레이드 1회 승리"),
+    (r"^Win a (\d+)-star raid or higher$",
+     lambda m: f"{m.group(1)}성 이상 레이드 1회 승리"),
+    # GO 로켓단
+    (r"^Defeat a Team GO Rocket Grunt$",
+     lambda m: "GO 로켓단 따까리 1명 처치"),
+    (r"^Defeat (\d+) Team GO Rocket Grunts?$",
+     lambda m: f"GO 로켓단 따까리 {m.group(1)}명 처치"),
+    (r"^Defeat a Team GO Rocket Leader$",
+     lambda m: "GO 로켓단 간부 1명 처치"),
+    # 배틀
+    (r"^Win (\d+) Trainer Battles?$",
+     lambda m: f"트레이너 배틀 {m.group(1)}회 승리"),
+    (r"^Win a Trainer Battle$",
+     lambda m: "트레이너 배틀 1회 승리"),
+    (r"^Win (\d+) Gym Battles?$",
+     lambda m: f"체육관 배틀 {m.group(1)}회 승리"),
+]
+
+
+def translate_research_task(en_text):
+    """영문 리서치 태스크 → 한글. 매칭 실패 시 원문 반환."""
+    if not en_text:
+        return en_text
+    s = en_text.strip()
+    for pat, fn in _RESEARCH_RULES:
+        m = _re_research.match(pat, s)
+        if m:
+            return fn(m)
+    return en_text  # fallback: 원문
 
 
 def load_research(force=False):
@@ -3857,6 +3988,13 @@ def run_gui(gm):
     ttk.Button(sched_top, text="갱신", width=8,
                command=lambda: _reload_raid_sched()).pack(side="right")
 
+    ttk.Label(raid_sched_tab,
+              text="⚠ 데이터 출처: LeekDuck (글로벌 기준) — 한국 일정과 다를 수 있습니다. "
+                   "원본은 10분마다 갱신, 우리 캐시는 1일마다 자동 갱신. "
+                   "지금 새로 받으려면 [갱신] 버튼을 누르세요.",
+              font=("", 8), foreground="#a00",
+              justify="left", wraplength=1000).pack(anchor="w", pady=(0, 4))
+
     raid_sched_tree = ttk.Treeview(raid_sched_tab,
                                    columns=("tier", "name", "types", "cp", "shiny"),
                                    show="headings", height=22, selectmode="browse")
@@ -4225,14 +4363,31 @@ def run_gui(gm):
     ttk.Button(rs_top, text="갱신", width=8,
                command=lambda: _reload_research()).pack(side="right")
 
+    rs_show_en_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(rs_top, text="영문 원문도 표시",
+                    variable=rs_show_en_var,
+                    command=lambda: _populate_research()).pack(side="left", padx=(8, 4))
+
     rs_tree = ttk.Treeview(research_tab,
-                           columns=("task", "reward", "cp", "shiny"),
+                           columns=("task", "task_en", "reward", "cp", "shiny"),
                            show="headings", height=22, selectmode="browse")
-    for c, h, w in [("task", "태스크", 380), ("reward", "보상 포켓몬", 260),
-                    ("cp", "CP 범위", 120), ("shiny", "색이다른", 80)]:
+    for c, h, w in [("task", "태스크 (한글)", 320), ("task_en", "원문 (영문)", 260),
+                    ("reward", "보상 포켓몬", 220), ("cp", "CP 범위", 110),
+                    ("shiny", "색이다른", 70)]:
         rs_tree.heading(c, text=h)
-        rs_tree.column(c, width=w, anchor="w" if c in ("task", "reward") else "center")
+        rs_tree.column(c, width=w,
+                       anchor="w" if c in ("task", "task_en", "reward") else "center")
     rs_tree.pack(fill="both", expand=True)
+    rs_tree.tag_configure("untranslated", foreground="#888")
+
+    def _toggle_en_col(*_):
+        if rs_show_en_var.get():
+            rs_tree.column("task_en", width=260, stretch=True)
+            rs_tree.heading("task_en", text="원문 (영문)")
+        else:
+            rs_tree.column("task_en", width=0, stretch=False, minwidth=0)
+            rs_tree.heading("task_en", text="")
+    _toggle_en_col()
 
     def _reload_research():
         try:
@@ -4244,10 +4399,13 @@ def run_gui(gm):
     def _populate_research():
         for r in rs_tree.get_children():
             rs_tree.delete(r)
+        _toggle_en_col()
         q = rs_search_var.get().strip().lower()
         shiny_only = rs_shiny_only_var.get()
         for task in research_state["data"]:
-            text = task.get("text", "")
+            text_en = task.get("text", "")
+            text_ko = translate_research_task(text_en)
+            translated = text_ko != text_en
             rewards = task.get("rewards") or []
             if not rewards:
                 continue
@@ -4256,13 +4414,18 @@ def run_gui(gm):
                 if shiny_only and not rw.get("canBeShiny"):
                     continue
                 ko = _en_to_display(en)
-                if q and q not in text.lower() and q not in ko.lower() and q not in en.lower():
+                if q and (q not in text_en.lower()
+                          and q not in text_ko.lower()
+                          and q not in ko.lower()
+                          and q not in en.lower()):
                     continue
                 cp = rw.get("combatPower") or {}
                 cp_str = f"{cp.get('min', '-')}~{cp.get('max', '-')}"
                 shiny = "○" if rw.get("canBeShiny") else ""
+                tag = "untranslated" if not translated else ""
                 rs_tree.insert("", "end",
-                               values=(text, ko, cp_str, shiny),
+                               values=(text_ko, text_en, ko, cp_str, shiny),
+                               tags=(tag,) if tag else (),
                                text=en)
 
     def _on_research_double(_e=None):
