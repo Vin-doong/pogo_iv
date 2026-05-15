@@ -1524,8 +1524,20 @@ def get_family_chain(gm, species_id):
     예: squirtle → [['squirtle'], ['wartortle'], ['blastoise']]
         eevee    → [['eevee'], ['vaporeon','jolteon',...]]
     변형(그림자/메가)일 경우 해당 변형의 family 우선, 없으면 베이스로.
+
+    PvPoke gamemaster 에 일부 종(gastrodon, silvally 등) 은 family.parent 가
+    누락되어 있어, 모든 종의 family.evolutions 를 역인덱스해 만든
+    evo_to_parent 맵을 fallback 으로 사용한다.
     """
     by_sid = {p.get("speciesId"): p for p in gm["pokemon"]}
+
+    # 역방향 인덱스: evolved_sid → parent_sid (family.parent 누락 보정용)
+    evo_to_parent: dict = {}
+    for q in gm["pokemon"]:
+        qfam = q.get("family") or {}
+        for evo in qfam.get("evolutions", []) or []:
+            evo_to_parent.setdefault(evo, q.get("speciesId"))
+
     p = by_sid.get(species_id)
     fam = p.get("family") if p else None
 
@@ -1545,15 +1557,29 @@ def get_family_chain(gm, species_id):
             p = by_sid[base]
             fam = p["family"]
             species_id = base
+        # family 가 통째로 None 이지만 다른 종의 evolutions 에 등록된 경우
+        # (예: gastrodon, silvally) — 진화 체인 일원으로 간주
+        if not fam and species_id in evo_to_parent:
+            fam = {"parent": evo_to_parent[species_id]}
         if not fam:
             return []
 
-    # Walk back to root
+    # Walk back to root.
+    # PvPoke gamemaster 일부 항목은 family.parent 가 실제 부모와 다른 종을 가리킴
+    # (예: carkol.parent=boltund, raticate.parent=rattata_alolan, mothim.parent=burmy_trash
+    # 인데 사용자가 burmy_plant 에서 들어와도 trash 로 우회). 양방향 검증으로 보정한다 —
+    # parent 의 evolutions 에 내가 포함되어 있을 때만 신뢰, 아니면 evo_to_parent fallback.
     root = species_id
     visited = {root}
     while True:
-        pr = by_sid.get(root, {}).get("family", {}) or {}
-        parent = pr.get("parent")
+        pr = by_sid.get(root, {}).get("family") or {}
+        claimed = pr.get("parent")
+        # 검증: claimed.evolutions 가 root 를 포함하는가?
+        if claimed:
+            par_fam = by_sid.get(claimed, {}).get("family") or {}
+            if root not in (par_fam.get("evolutions") or []):
+                claimed = None  # 비대칭 → 신뢰 안 함
+        parent = claimed or evo_to_parent.get(root)
         if not parent or parent not in by_sid or parent in visited:
             break
         visited.add(parent)
@@ -4655,7 +4681,18 @@ def run_gui(gm):
 
     def select_pokemon_by_display(disp):
         search_var.set("")
-        if fav_only_var.get() and display_to_sid.get(disp) not in favorites:
+        sid = display_to_sid.get(disp)
+        # 진화 링크가 메가/그림자 폼이면 해당 카테고리 자동 활성화 — 안 그러면
+        # 좌측 리스트에 그 폼이 없어서 선택이 실패하고 타입/IV 등이 갱신 안 됨.
+        if sid:
+            cat = _category(sid)
+            if cat == "mega" and not show_mega_var.get():
+                show_mega_var.set(True)
+            elif cat == "shadow" and not show_shadow_var.get():
+                show_shadow_var.set(True)
+            elif cat == "normal" and not show_normal_var.get():
+                show_normal_var.set(True)
+        if fav_only_var.get() and sid not in favorites:
             fav_only_var.set(False)
         update_listbox(force=True, auto_select=False)
         for idx in range(listbox.size()):
@@ -5226,18 +5263,31 @@ def run_gui(gm):
     def _on_listbox_select(_e=None):
         refresh()
         # 활성 탭에 따라 추가 갱신 (PvE DPS / PvE 카운터 임의 보스 모드)
+        # — 사용자가 PvE 탭에 머무는 흐름을 깨지 않도록 그 탭들은 자동 전환 안 함.
+        active_tab_text = ""
         try:
-            tab = notebook.tab(notebook.select(), "text").strip()
-            if tab == "PvE DPS":
+            active_tab_text = notebook.tab(notebook.select(), "text").strip()
+            if active_tab_text == "PvE DPS":
                 refresh_pve_dps()
-            elif tab == "PvE 카운터" and use_selected_var.get():
+            elif active_tab_text == "PvE 카운터" and use_selected_var.get():
                 refresh_counters()
         except Exception:
             pass
+        # PvE DPS / PvE 카운터(임의 보스) 외의 탭에서는 PvP 분석으로 자동 점프
+        # — 좌측에서 종을 클릭한 의도는 보통 그 종의 PvP 분석 보기.
+        if active_tab_text not in ("PvE DPS",) and not (
+            active_tab_text == "PvE 카운터" and use_selected_var.get()
+        ):
+            try:
+                notebook.select(iv_tab)
+            except Exception:
+                pass
     listbox.bind("<<ListboxSelect>>", _on_listbox_select)
     listbox.bind("<Return>", _on_listbox_select)
     meta_tree.bind("<Double-Button-1>", on_meta_double)
     meta_tree.bind("<Return>", on_meta_double)
+    # 단일 클릭으로도 같은 동작 — 행을 누르면 좌측 리스트 + PvP 분석 탭으로 점프
+    meta_tree.bind("<ButtonRelease-1>", on_meta_double)
 
     meta_search_pending = [None]
     def on_meta_search(*_):
