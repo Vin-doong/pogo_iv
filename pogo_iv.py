@@ -1602,6 +1602,145 @@ def get_family_chain(gm, species_id):
     return stages
 
 
+def find_acquisition_for_sid(target_sid, gm, eggs, raids_combined,
+                              rocket_lineups, research, sid_to_display):
+    """target_sid 의 진화 사슬을 따라 현재 일정상 입수 가능한 경로를 찾는다.
+
+    eggs / raids_combined / rocket_lineups / research 는 ScrapedDuck 캐시 포맷.
+    raids_combined 는 load_combined_raids() 의 글로벌+한국 합본.
+
+    사전 진화 단계까지 포함해 검색 — 가령 라프라스를 진화시켜 만드는 ㄴ오라를
+    골랐을 때 "사전 진화 라프라스가 10km 알에 있음" 이 함께 표시된다.
+
+    반환: 사람이 읽는 텍스트(여러 줄 가능). 어디서도 안 잡히면 안내 문구.
+    """
+    # 영문 이름 → speciesId. find_boss_pokemon 가 메가/그림자/지역폼 처리.
+    def _to_sid(en_name):
+        p = find_boss_pokemon(en_name, gm) if en_name else None
+        return p.get("speciesId") if p else None
+
+    stages = get_family_chain(gm, target_sid)
+    target_stage_idx = -1
+    for i, stage in enumerate(stages):
+        if target_sid in stage:
+            target_stage_idx = i
+            break
+
+    if target_stage_idx < 0:
+        relevant = {target_sid: 0}
+        target_stage_idx = 0
+    else:
+        relevant = {}
+        for i in range(target_stage_idx + 1):
+            for s in stages[i]:
+                relevant[s] = i
+
+    by_sid: dict = {}  # sid -> [(icon, detail), ...]
+    def _add(sid, icon, detail):
+        by_sid.setdefault(sid, []).append((icon, detail))
+
+    # 알
+    for e in eggs or []:
+        sid = _to_sid(e.get("name", ""))
+        if sid not in relevant:
+            continue
+        flags = []
+        if e.get("isAdventureSync"): flags.append("어드벤처싱크")
+        if e.get("canBeShiny"): flags.append("✨")
+        if e.get("isRegional"): flags.append("지역한정")
+        suffix = f" ({' · '.join(flags)})" if flags else ""
+        _add(sid, "🥚", f"{e.get('eggType', '?')}{suffix}")
+
+    # 레이드 (글로벌+한국 합본)
+    raid_seen = set()
+    tier_short_map = [
+        ("5-Star", "5★"), ("Mega", "메가"), ("Shadow", "그림자"),
+        ("Elite", "엘리트"), ("3-Star", "3★"), ("1-Star", "1★"),
+    ]
+    for r in raids_combined or []:
+        sid = _to_sid(r.get("name", ""))
+        if sid not in relevant:
+            continue
+        tier_raw = r.get("tier", "") or ""
+        tier_short = tier_raw
+        for k, v in tier_short_map:
+            if k in tier_raw:
+                tier_short = v
+                break
+        if (sid, tier_short) in raid_seen:
+            continue
+        raid_seen.add((sid, tier_short))
+        cp = r.get("combatPower", {}) or {}
+        normal = cp.get("normal", {}) if "normal" in cp else cp
+        cp_str = ""
+        if isinstance(normal, dict) and normal.get("min") and normal.get("max"):
+            cp_str = f" CP{normal['min']}~{normal['max']}"
+        src = r.get("_source", "")
+        src_tag = " 🇰🇷" if src == "kr" else ""
+        _add(sid, "⚔", f"{tier_short} 레이드{cp_str}{src_tag}")
+
+    # 필드 리서치
+    research_tasks: dict = {}
+    for task in research or []:
+        text = task.get("text", "")
+        for reward in task.get("rewards", []) or []:
+            sid = _to_sid(reward.get("name", ""))
+            if sid not in relevant:
+                continue
+            research_tasks.setdefault(sid, []).append(translate_research_task(text))
+    for sid, tasks in research_tasks.items():
+        uniq = list(dict.fromkeys(tasks))
+        sample = " / ".join(uniq[:2])
+        extra = f" 외 {len(uniq) - 2}건" if len(uniq) > 2 else ""
+        _add(sid, "📋", f"리서치: {sample}{extra}")
+
+    # 로켓 라인업 (isEncounter=True 슬롯만 = 실제 포획 가능)
+    leader_ko = {"Cliff": "클리프", "Sierra": "시에라", "Arlo": "알로"}
+    rocket_labels: dict = {}
+    for entry in rocket_lineups or []:
+        role_en = entry.get("title", "")
+        npc_name = entry.get("name", "")
+        for slot_key in ("firstPokemon", "secondPokemon", "thirdPokemon"):
+            for p in entry.get(slot_key, []) or []:
+                if not p.get("isEncounter"):
+                    continue
+                sid = _to_sid(p.get("name", ""))
+                if sid not in relevant:
+                    continue
+                if role_en == "Team GO Rocket Boss":
+                    label = "지오반시"
+                elif role_en == "Team GO Rocket Leader":
+                    label = f"{leader_ko.get(npc_name, npc_name)}(간부)"
+                else:
+                    t = (entry.get("type") or "").lower()
+                    if t and t in _RESEARCH_TYPE_KO:
+                        label = f"{_RESEARCH_TYPE_KO[t]} 따까리"
+                    else:
+                        label = "따까리"
+                rocket_labels.setdefault(sid, set()).add(label)
+    for sid, labels in rocket_labels.items():
+        _add(sid, "🤖", f"로켓: {', '.join(sorted(labels))}")
+
+    if not by_sid:
+        return "(현재 일정상 입수 경로 없음 — 야생 출현 / 둥지 / 진화로만 획득 가능)"
+
+    # target 자신 먼저, 사전 진화체는 별도 줄
+    lines = []
+    if target_sid in by_sid:
+        items = by_sid.pop(target_sid)
+        lines.append(" · ".join(f"{i} {d}" for i, d in items))
+    for sid, items in by_sid.items():
+        diff = target_stage_idx - relevant.get(sid, 0)
+        disp = sid_to_display.get(sid, sid)
+        if diff <= 1:
+            prefix = f"(사전 진화 {disp}) "
+        else:
+            prefix = f"(사전 진화 {disp}, {diff}단계 전) "
+        body = " · ".join(f"{i} {d}" for i, d in items)
+        lines.append(prefix + body)
+    return "\n".join(lines)
+
+
 def build_ko_base_map(gm, dex_to_ko):
     """CLI용: 한글 베이스명(공백제거/소문자) → speciesId."""
     ko_to_sid = {}
@@ -2536,6 +2675,21 @@ def run_gui(gm):
     type_title.pack(side="left", padx=(0, 6))
     type_inner = ttk.Frame(type_frame)
     type_inner.pack(side="left", fill="x", expand=True)
+
+    # 입수처: 현재 일정상 어디서 잡힐 수 있는지 (알 / 레이드 / 리서치 / 로켓)
+    # 사전 진화 단계까지 거슬러 검색 — 진화로만 얻을 수 있는 포켓몬도 표시됨.
+    acq_frame = ttk.Frame(info_stack)
+    acq_frame.pack(fill="x", pady=(2, 0))
+    ttk.Label(acq_frame, text="입수:", font=("", 9, "bold"),
+              foreground="#555").pack(side="left", padx=(0, 6), anchor="nw")
+    acq_var = tk.StringVar(value="")
+    acq_lbl = ttk.Label(acq_frame, textvariable=acq_var, font=("", 9),
+                        foreground="#333", wraplength=600, justify="left")
+    acq_lbl.pack(side="left", fill="x", expand=True, anchor="w")
+    # info_stack 너비에 맞춰 wraplength 동적 조정
+    def _on_info_stack_resize(event):
+        acq_lbl.configure(wraplength=max(200, event.width - 60))
+    info_stack.bind("<Configure>", _on_info_stack_resize)
 
     # My IV input → real-time rank display (비어있으면 내 순위 계산 안 함)
     my_iv_frame = ttk.Frame(iv_tab)
@@ -4815,6 +4969,34 @@ def run_gui(gm):
         else:
             fav_btn_var.set("☆ 즐겨찾기")
 
+    def render_acquisition(sid):
+        """현재 일정상 입수 경로를 입수 라벨에 채운다. 데이터가 아직 로드 안 됐으면 빈 칸."""
+        if not sid:
+            acq_var.set("")
+            return
+        try:
+            eggs = eggs_state.get("data") or []
+        except NameError:
+            eggs = []
+        try:
+            raids_c = raid_state.get("bosses") or []
+        except NameError:
+            raids_c = []
+        try:
+            rocket = rkt_state.get("data") or []
+        except NameError:
+            rocket = []
+        try:
+            research = research_state.get("data") or []
+        except NameError:
+            research = []
+        try:
+            text = find_acquisition_for_sid(sid, state["gm"], eggs, raids_c,
+                                             rocket, research, sid_to_display)
+        except Exception as exc:
+            text = f"(입수처 계산 실패: {exc})"
+        acq_var.set(text)
+
     def refresh():
         refresh_meta()
         sel = listbox.curselection()
@@ -4824,6 +5006,7 @@ def run_gui(gm):
             clear_sprite()
             clear_moves_tab()
             clear_type_row()
+            acq_var.set("")
             fav_btn_var.set("☆ 즐겨찾기")
             table_label.set("")
             my_iv_result.set("")
@@ -4841,6 +5024,7 @@ def run_gui(gm):
         base = pokemon["baseStats"]
         update_fav_btn(sid)
         render_type_effectiveness(pokemon.get("types") or [])
+        render_acquisition(sid)
 
         # 현재 레벨 (강화 비용 계산용)
         cur_lv_s = cur_lv_var.get().strip()
@@ -5193,6 +5377,7 @@ def run_gui(gm):
         clear_sprite()
         clear_moves_tab()
         clear_type_row()
+        acq_var.set("")
         fav_btn_var.set("☆ 즐겨찾기")
         table_label.set("")
         my_iv_result.set("")
