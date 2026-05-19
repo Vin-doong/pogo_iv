@@ -4004,13 +4004,23 @@ def run_gui(gm):
 
     def do_data_refresh():
         if not messagebox.askyesno("데이터 업데이트",
-                                   "PvPoke 시즌 데이터를 다시 다운로드합니다.\n"
-                                   "(인터넷 연결 필요, 약 5~15초)\n\n계속할까요?"):
+                                   "PvPoke 시즌 데이터 + 일정/메타/팀 데이터를 모두 다시 다운로드합니다.\n"
+                                   "(인터넷 연결 필요, 약 10~30초)\n\n계속할까요?"):
             return
+        data_status_var.set("⟳ 갱신 중…")
+        root.update_idletasks()
         try:
             refresh_all_data()
+            # 팀 메타 — 빌트인 4리그 강제 갱신 (refresh_all_data 에는 없음)
+            for lg in _BUILTIN_LEAGUES:
+                cap = lg.cap if lg.cap else 10000
+                try:
+                    load_team_meta("all", cap, force=True)
+                except Exception as e:
+                    print(f"팀메타 갱신 실패 {lg.name}: {e}")
         except Exception as e:
             messagebox.showerror("실패", f"갱신 실패: {e}")
+            update_data_status_label()
             return
         # 새 데이터 반영
         new_gm = load_gamemaster()
@@ -4044,15 +4054,75 @@ def run_gui(gm):
         ranking_cache.clear()
         _ranking_lru.clear()
         _ranking_lru_order.clear()
+
+        # ───── 모든 탭 뷰 갱신 ─────
+        # 일정 4탭: state reload + populate + 신선도 라벨 갱신
         try:
-            raid_state["bosses"] = load_combined_raids(force=True)
+            raid_state["bosses"] = load_combined_raids()
             _populate_boss_combo()
+            _populate_raid_sched(raid_state["bosses"])
+            _update_sched_fresh()
+        except Exception as e:
+            print(f"레이드 일정 뷰 갱신 실패: {e}")
+        try:
+            events_state["data"] = load_events()
+            _populate_events()
+            _update_ev_fresh()
+        except Exception as e:
+            print(f"이벤트 뷰 갱신 실패: {e}")
+        try:
+            eggs_state["data"] = load_eggs()
+            _populate_eggs()
+            _update_eg_fresh()
+        except Exception as e:
+            print(f"알 뷰 갱신 실패: {e}")
+        try:
+            research_state["data"] = load_research()
+            _populate_research()
+            _update_rs_fresh()
+        except Exception as e:
+            print(f"리서치 뷰 갱신 실패: {e}")
+        try:
+            rkt_state["data"] = load_rocket_lineups()
+            _populate_rocket()  # 자체 신선도 라벨 갱신 포함
+        except Exception as e:
+            print(f"로켓 뷰 갱신 실패: {e}")
+
+        # PvP/PvE 뷰 갱신
+        try:
+            refresh_meta(force=True)
         except Exception:
             pass
+        try:
+            refresh_compare()
+        except Exception:
+            pass
+        try:
+            refresh_reverse()
+        except Exception:
+            pass
+        try:
+            refresh_counters()
+        except Exception:
+            pass
+        try:
+            refresh_pve_dps()
+        except Exception:
+            pass
+        try:
+            refresh_rocket()
+        except Exception:
+            pass
+        try:
+            _refresh_team_meta(force=False)  # 파일은 위에서 이미 force 다운로드함
+        except Exception:
+            pass
+
         update_data_status_label()
         update_listbox(force=True, auto_select=False)
-        refresh_meta(force=True)
-        messagebox.showinfo("완료", "데이터 업데이트 완료")
+        messagebox.showinfo("완료",
+            "데이터 업데이트 완료\n"
+            "• 시즌 데이터·랭킹·팀 메타·일정 4종·로켓 라인업 모두 갱신")
 
     last_meta_state = [(None, None)]  # (league, search_query)
 
