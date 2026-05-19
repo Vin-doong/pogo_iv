@@ -21,3 +21,12 @@ settings.json
 __pycache__/
 *.pyc
 *.pyo
+
+# Discord 봇 시크릿 — 절대 커밋 금지
+.env
+
+# Claude Code 로컬 세션/설정
+.claude/
+
+# 작업 중인 별개 안건 (안드로이드 자동화 계획)
+ANDROID_PLAN.md

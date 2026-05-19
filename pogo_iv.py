@@ -2807,7 +2807,350 @@ def run_gui(gm):
     charged_tree.pack(side="left", fill="both", expand=True)
     charged_scroll.config(command=charged_tree.yview)
 
-    # --- Tab 2: 리그 메타 랭킹 ---
+    # --- Tab 2: PvP 비교 (두 포켓몬 나란히) ---
+    compare_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(compare_tab, text="  PvP 비교  ")
+
+    ttk.Label(compare_tab,
+              text="두 포켓몬을 IV/레벨/리그별로 나란히 비교. 입력 시 자동 갱신.",
+              font=("", 9), foreground="#555").pack(anchor="w", pady=(0, 6))
+
+    # forward-ref 안전한 디바운서 (refresh_compare 는 아래에서 정의)
+    _cmp_after_id = [None]
+    def _schedule_cmp_refresh(*_a):
+        if _cmp_after_id[0]:
+            try:
+                root.after_cancel(_cmp_after_id[0])
+            except Exception:
+                pass
+        _cmp_after_id[0] = root.after(180, lambda: refresh_compare())
+
+    cmp_inputs_row = ttk.Frame(compare_tab)
+    cmp_inputs_row.pack(fill="x", pady=(0, 6))
+
+    def _build_cmp_panel(parent, label):
+        f = ttk.LabelFrame(parent, text=f"  {label}  ", padding=(8, 6))
+        name_v = tk.StringVar(value="")
+        ttk.Label(f, text="포켓몬").grid(row=0, column=0, sticky="w", padx=(0, 4))
+        name_combo = make_searchable_combo(f, name_v, all_displays_full,
+                                           on_select=_schedule_cmp_refresh, width=24)
+        name_combo.grid(row=0, column=1, columnspan=5, sticky="w", pady=(0, 4))
+
+        a_v = tk.StringVar(value="15")
+        d_v = tk.StringVar(value="15")
+        h_v = tk.StringVar(value="15")
+        ttk.Label(f, text="공").grid(row=1, column=0, sticky="e", pady=(2, 0))
+        ttk.Spinbox(f, from_=0, to=15, textvariable=a_v, width=4).grid(row=1, column=1, sticky="w", pady=(2, 0))
+        ttk.Label(f, text="방").grid(row=1, column=2, sticky="e", padx=(8, 0), pady=(2, 0))
+        ttk.Spinbox(f, from_=0, to=15, textvariable=d_v, width=4).grid(row=1, column=3, sticky="w", pady=(2, 0))
+        ttk.Label(f, text="체").grid(row=1, column=4, sticky="e", padx=(8, 0), pady=(2, 0))
+        ttk.Spinbox(f, from_=0, to=15, textvariable=h_v, width=4).grid(row=1, column=5, sticky="w", pady=(2, 0))
+
+        lv_v = tk.StringVar(value="51")
+        ttk.Label(f, text="최대 Lv").grid(row=2, column=0, sticky="e", pady=(4, 0))
+        ttk.Combobox(f, textvariable=lv_v, values=["40", "45", "50", "51"],
+                     width=5, state="readonly").grid(row=2, column=1, sticky="w", pady=(4, 0))
+
+        for v in (a_v, d_v, h_v, lv_v):
+            v.trace_add("write", _schedule_cmp_refresh)
+
+        return f, {"name": name_v, "a": a_v, "d": d_v, "h": h_v, "lv": lv_v}
+
+    panel_a, cmp_a = _build_cmp_panel(cmp_inputs_row, "포켓몬 A (좌)")
+    panel_a.pack(side="left", fill="y", padx=(0, 8))
+    panel_b, cmp_b = _build_cmp_panel(cmp_inputs_row, "포켓몬 B (우)")
+    panel_b.pack(side="left", fill="y")
+
+    cmp_ctrl = ttk.Frame(compare_tab)
+    cmp_ctrl.pack(fill="x", pady=(0, 4))
+    ttk.Label(cmp_ctrl, text="비교 기준 리그",
+              font=("", 9, "bold")).pack(side="left", padx=(0, 6))
+    cmp_league_var = tk.StringVar(value="슈퍼리그")
+    cmp_league_combo = ttk.Combobox(cmp_ctrl, textvariable=cmp_league_var,
+                                    values=[lg.name for lg in LEAGUES],
+                                    state="readonly", width=22)
+    cmp_league_combo.pack(side="left")
+    cmp_league_combo.bind("<<ComboboxSelected>>", _schedule_cmp_refresh)
+    ttk.Label(cmp_ctrl,
+              text="(메타 점수·순위는 빌트인 4리그 모두 표시 / 매치업·추천 무브셋은 선택 리그)",
+              font=("", 8), foreground="#888").pack(side="left", padx=(10, 0))
+
+    cmp_frame = ttk.Frame(compare_tab)
+    cmp_frame.pack(fill="both", expand=True, pady=(4, 6))
+    cmp_scroll = ttk.Scrollbar(cmp_frame, orient="vertical")
+    cmp_scroll.pack(side="right", fill="y")
+    cmp_tree = ttk.Treeview(cmp_frame, columns=("metric", "a", "b"),
+                            show="headings", yscrollcommand=cmp_scroll.set, height=20)
+    cmp_tree.heading("metric", text="항목")
+    cmp_tree.heading("a", text="A")
+    cmp_tree.heading("b", text="B")
+    cmp_tree.column("metric", width=160, anchor="w")
+    cmp_tree.column("a", width=380, anchor="w")
+    cmp_tree.column("b", width=380, anchor="w")
+    cmp_tree.pack(side="left", fill="both", expand=True)
+    cmp_scroll.config(command=cmp_tree.yview)
+    cmp_tree.tag_configure("hdr", background="#eef")
+    cmp_tree.tag_configure("emph", background="#fff9dd")
+
+    cmp_action_row = ttk.Frame(compare_tab)
+    cmp_action_row.pack(fill="x")
+    cmp_status_var = tk.StringVar(value="")
+
+    def _open_pvpoke_compare():
+        da = cmp_a["name"].get().strip()
+        db = cmp_b["name"].get().strip()
+        sa = display_to_sid.get(da)
+        sb = display_to_sid.get(db)
+        if not (sa and sb):
+            cmp_status_var.set("두 포켓몬 모두 선택해주세요.")
+            return
+        lg = next((l for l in LEAGUES if l.name == cmp_league_var.get()), None)
+        cap = lg.cap if (lg and lg.cap) else 10000
+        url = f"https://pvpoke.com/battle/{cap}/{sa}/{sb}/11/"
+        try:
+            import webbrowser
+            webbrowser.open(url)
+            cmp_status_var.set(f"→ {url}")
+        except Exception as e:
+            cmp_status_var.set(f"브라우저 열기 실패: {e}")
+
+    ttk.Button(cmp_action_row, text="PvPoke 매치업으로 열기 (브라우저)",
+               command=_open_pvpoke_compare).pack(side="left")
+    ttk.Label(cmp_action_row, textvariable=cmp_status_var,
+              foreground="#666", font=("", 8)).pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    # ───── 비교 계산 / 렌더링 ─────
+    def _cmp_parse_iv(s, default=15):
+        s = (s or "").strip()
+        try:
+            v = int(s)
+            return v if 0 <= v <= 15 else default
+        except ValueError:
+            return default
+
+    def _cmp_parse_lv(s):
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return 51.0
+
+    def _cmp_lookup_pokemon(display_name):
+        sid = display_to_sid.get(display_name)
+        if not sid:
+            return None, None
+        p = next((x for x in state["gm"]["pokemon"] if x.get("speciesId") == sid), None)
+        return p, sid
+
+    def _cmp_weak_resist_strs(types):
+        clean = [t for t in (types or []) if t and t != "none"]
+        if not clean:
+            return "—", "—"
+        weak, resist = [], []
+        for atk in TYPES_ORDER:
+            mult = 1.0
+            for d in clean:
+                mult *= TYPE_CHART.get(atk, {}).get(d, 1.0)
+            if mult > 1.01:
+                weak.append((atk, mult))
+            elif mult < 0.99:
+                resist.append((atk, mult))
+        weak.sort(key=lambda x: -x[1])
+        resist.sort(key=lambda x: x[1])
+        fmt = lambda t, m: f"{TYPE_KO.get(t, t)}×{m:.2f}"
+        return (", ".join(fmt(*x) for x in weak) or "—",
+                ", ".join(fmt(*x) for x in resist) or "—")
+
+    def _cmp_type_mult(attack_type, defender_types):
+        clean = [t for t in (defender_types or []) if t and t != "none"]
+        mult = 1.0
+        for d in clean:
+            mult *= TYPE_CHART.get(attack_type, {}).get(d, 1.0)
+        return mult
+
+    def _cmp_matchup_line(my_pokemon, opp_types):
+        clean = [t for t in (opp_types or []) if t and t != "none"]
+        if not clean:
+            return "—"
+        bm = best_moveset_vs(my_pokemon, clean, moves_by_id,
+                             boss_cpm=0.79, boss_base_def=180, attacker_level=50)
+        if not bm:
+            return "—"
+        ftype = bm["fast_type"]
+        ctype = bm["charged_type"]
+        fm = _cmp_type_mult(ftype, clean)
+        cm = _cmp_type_mult(ctype, clean)
+        def emoji(m):
+            if m >= 1.6:
+                return " 💥"
+            if m <= 0.625:
+                return " 🛡"
+            return ""
+        f_name = prettify_move(bm["fast_id"], move_ko_map)
+        c_name = prettify_move(bm["charged_id"], move_ko_map)
+        return (f"{f_name}({TYPE_KO.get(ftype, ftype)}) ×{fm:.2f}{emoji(fm)}  ·  "
+                f"{c_name}({TYPE_KO.get(ctype, ctype)}) ×{cm:.2f}{emoji(cm)}")
+
+    def refresh_compare():
+        for r in cmp_tree.get_children():
+            cmp_tree.delete(r)
+
+        pa, sa = _cmp_lookup_pokemon(cmp_a["name"].get())
+        pb, sb = _cmp_lookup_pokemon(cmp_b["name"].get())
+
+        ia = (_cmp_parse_iv(cmp_a["a"].get()),
+              _cmp_parse_iv(cmp_a["d"].get()),
+              _cmp_parse_iv(cmp_a["h"].get()))
+        ib = (_cmp_parse_iv(cmp_b["a"].get()),
+              _cmp_parse_iv(cmp_b["d"].get()),
+              _cmp_parse_iv(cmp_b["h"].get()))
+        lva = _cmp_parse_lv(cmp_a["lv"].get())
+        lvb = _cmp_parse_lv(cmp_b["lv"].get())
+
+        def row(metric, va, vb, tag=""):
+            cmp_tree.insert("", "end", values=(metric, va, vb),
+                            tags=(tag,) if tag else ())
+
+        ta = sid_to_display.get(sa, "—") if pa else "—"
+        tb = sid_to_display.get(sb, "—") if pb else "—"
+        row("포켓몬", ta, tb, "hdr")
+
+        if not (pa and pb):
+            row("(안내)",
+                "좌측 콤보에서 포켓몬을 선택하세요." if not pa else f"입력: {ta}",
+                "우측 콤보에서 포켓몬을 선택하세요." if not pb else f"입력: {tb}")
+            return
+
+        bsa, bsb = pa["baseStats"], pb["baseStats"]
+        row("종족값 (공/방/체)",
+            f"{bsa['atk']} / {bsa['def']} / {bsa['hp']}",
+            f"{bsb['atk']} / {bsb['def']} / {bsb['hp']}")
+
+        types_a = [t for t in pa.get("types", []) if t and t != "none"]
+        types_b = [t for t in pb.get("types", []) if t and t != "none"]
+        row("타입",
+            " / ".join(TYPE_KO.get(t, t) for t in types_a) or "—",
+            " / ".join(TYPE_KO.get(t, t) for t in types_b) or "—")
+
+        wa, ra = _cmp_weak_resist_strs(types_a)
+        wb, rb = _cmp_weak_resist_strs(types_b)
+        row("약점 (>×1)", wa, wb)
+        row("내성 (<×1)", ra, rb)
+
+        rows_a, _ = analyze_pokemon(pa, ia, lva)
+        rows_b, _ = analyze_pokemon(pb, ib, lvb)
+        lname_to_a = {r[0]: r for r in rows_a}
+        lname_to_b = {r[0]: r for r in rows_b}
+
+        def lstr(rr, sid, lname):
+            if not rr or rr[1] is None:
+                return "(못 들어감)"
+            _, lvl, cp, sp, rank, pct, _top = rr
+            meta_rk = rankings_index.get(lname, {}).get(sid)
+            mtotal = len(rankings.get(lname, []))
+            meta = f"메타 #{meta_rk}/{mtotal}" if meta_rk else "메타 미등재"
+            return f"Lv{lvl:g} CP{cp} SP{sp:,.0f}\n{meta} · IV순위 #{rank}/4096 · {pct:.1f}%"
+
+        for lg in _BUILTIN_LEAGUES:
+            lname = lg.name
+            row(f"▶ {lname}",
+                lstr(lname_to_a.get(lname), sa, lname),
+                lstr(lname_to_b.get(lname), sb, lname))
+
+        sel_lname = cmp_league_var.get()
+        sel_lg = next((l for l in LEAGUES if l.name == sel_lname), None)
+        if sel_lg:
+            def meta_entry(sid):
+                rk = rankings.get(sel_lname, [])
+                for e in rk:
+                    if e.get("speciesId") == sid:
+                        return e
+                return None
+
+            ea = meta_entry(sa)
+            eb = meta_entry(sb)
+
+            def meta_moves_str(entry):
+                if not entry:
+                    return "—"
+                ms = entry.get("moveset") or []
+                return " / ".join(prettify_move(m, move_ko_map) for m in ms[:3]) or "—"
+            row(f"추천 무브셋 ({sel_lname})",
+                meta_moves_str(ea), meta_moves_str(eb), "emph")
+            row("A 무브 → B 매치업",
+                _cmp_matchup_line(pa, types_b), "—", "emph")
+            row("B 무브 → A 매치업",
+                "—", _cmp_matchup_line(pb, types_a), "emph")
+
+            # ───── ✦ 종합 판단 ─────
+            # 1) 메타 점수 (PvPoke score, 선택 리그)
+            score_a = ea.get("score") if ea else None
+            score_b = eb.get("score") if eb else None
+            rank_a = rankings_index.get(sel_lname, {}).get(sa)
+            rank_b = rankings_index.get(sel_lname, {}).get(sb)
+
+            def _meta_cell(score, rank, is_winner, is_tie):
+                if score is None:
+                    return "미등재"
+                base = f"{score:.1f}"
+                if rank:
+                    base += f" (#{rank})"
+                if is_tie:
+                    return base + "  (비슷)"
+                return base + ("  ← 우세" if is_winner else "")
+
+            if score_a is not None and score_b is not None:
+                diff = score_a - score_b
+                tie = abs(diff) < 1.0  # 1.0 점 이내 → 비슷
+                a_meta_win = (not tie) and diff > 0
+                b_meta_win = (not tie) and diff < 0
+            else:
+                tie = False
+                a_meta_win = b_meta_win = False
+            row(f"✦ 메타 점수 ({sel_lname})",
+                _meta_cell(score_a, rank_a, a_meta_win, tie),
+                _meta_cell(score_b, rank_b, b_meta_win, tie), "emph")
+
+            # 2) 매치업 eDPS — 상대 타입을 방어자로 둔 최고 무브셋 eDPS 직접 비교
+            #    boss_cpm/boss_def 는 PvP 기준 아니지만 양쪽 동일 baseline → 상대 비교 유효
+            def _edps_vs(attacker, defender_types):
+                clean = [t for t in (defender_types or []) if t and t != "none"]
+                if not clean:
+                    return None
+                bm = best_moveset_vs(attacker, clean, moves_by_id,
+                                     boss_cpm=0.79, boss_base_def=180,
+                                     attacker_level=50)
+                return bm["edps"] if bm else None
+
+            edps_a = _edps_vs(pa, types_b)
+            edps_b = _edps_vs(pb, types_a)
+
+            def _edps_cell(v, is_winner, is_tie):
+                if v is None:
+                    return "—"
+                base = f"{v:.2f}"
+                if is_tie:
+                    return base + "  (비슷)"
+                return base + ("  ← 유리" if is_winner else "")
+
+            if edps_a and edps_b:
+                ratio = edps_a / edps_b
+                e_tie = 0.9 <= ratio <= 1.1  # ±10% 이내 → 비슷
+                a_edps_win = (not e_tie) and ratio > 1.0
+                b_edps_win = (not e_tie) and ratio < 1.0
+            else:
+                e_tie = False
+                a_edps_win = b_edps_win = False
+            row("✦ 매치업 공격 효율 (eDPS, 상대 비교)",
+                _edps_cell(edps_a, a_edps_win, e_tie),
+                _edps_cell(edps_b, b_edps_win, e_tie), "emph")
+
+            row("※ 참고",
+                "실 PvP 결과는 무브 회전·실드·스왑 어드밴티지로 달라질 수 있음 — 정밀 비교는 PvPoke 시뮬레이터(아래 버튼) 권장",
+                "—")
+
+    refresh_compare()  # 초기 placeholder 렌더
+
+    # --- Tab 3: 리그 메타 랭킹 ---
     meta_tab = ttk.Frame(notebook, padding=(6, 8))
     notebook.add(meta_tab, text="  PvP 메타  ")
 
@@ -5529,10 +5872,11 @@ def run_gui(gm):
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
 
-    # 탭 순서 재배치: PvP 팀 메타를 PvP 그룹(PvP CP→IV 뒤, idx=4)으로 이동.
+    # 탭 순서 재배치: PvP 팀 메타를 PvP 그룹(PvP CP→IV 뒤, idx=5)으로 이동.
     # 다른 탭은 add 순서 그대로. insert 는 같은 widget 이면 자동 이동.
+    # (PvP 비교 탭이 idx=1 로 추가되면서 한 칸씩 밀림 → 5)
     try:
-        notebook.insert(4, team_meta_tab)
+        notebook.insert(5, team_meta_tab)
     except Exception:
         pass
 
