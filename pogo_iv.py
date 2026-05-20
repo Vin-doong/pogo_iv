@@ -4458,6 +4458,8 @@ def run_gui(gm):
         _update_sched_fresh()
 
     def _populate_raid_sched(bosses):
+        for r in raid_sched_tree.get_children():
+            raid_sched_tree.delete(r)
         order = {"5-star": 0, "Mega": 1, "Elite": 1, "Shadow": 2,
                  "3-star": 3, "1-star": 4}
         # 출처 우선순위: 양쪽(✓) > 한국(🇰🇷) > 글로벌(🌐)
