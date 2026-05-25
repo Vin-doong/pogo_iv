@@ -340,6 +340,12 @@ CPM = [
     0.83530001, 0.837800015, 0.8403, 0.842800015, 0.84529999,
 ]
 
+# 베스트 친구 보너스 (+1 레벨) 없이 일반적으로 도달 가능한 최대 레벨.
+# PvPoke, pvpivs, pokemongo-get 등 주요 사이트가 모두 Lv50 을 기본 캡으로 사용.
+# Best Buddy 활성 포켓몬은 CLI 의 --max-level 51 로 따로 지정.
+DEFAULT_MAX_LEVEL = 50.0
+DEFAULT_MAX_IDX = int(round((DEFAULT_MAX_LEVEL - 1.0) * 2))  # = 98
+
 
 # ----- data loading -----
 
@@ -2302,7 +2308,8 @@ def run_cli(args, gm):
         return
 
     print("Pokemon GO PvP 개체값 리그 랭커 (CLI)")
-    print(f"최대 레벨: {args.max_level}  (XL사탕 없으면 --max-level 40)")
+    print(f"최대 레벨: {args.max_level}  "
+          f"(XL사탕 없으면 --max-level 40, Best Buddy 활성은 --max-level 51)")
     print("종료: 빈 줄에서 엔터 또는 Ctrl+C\n")
     while True:
         try:
@@ -4179,7 +4186,7 @@ def run_gui(gm):
                 pass
             _ranking_lru_order.insert(0, sid)
             return cached
-        max_idx = len(CPM) - 1
+        max_idx = DEFAULT_MAX_IDX
         data = {}
         for lg in LEAGUES:
             r = rank_all(base, lg.cap, max_idx)
@@ -5639,7 +5646,7 @@ def run_gui(gm):
             return
         user_iv = (a, d, h)
         topn = max(50, min(500, rev_topn_var.get() or 200))
-        max_idx = len(CPM) - 1
+        max_idx = DEFAULT_MAX_IDX
         gm_pokemon = state["gm"]["pokemon"]
         by_sid = {p["speciesId"]: p for p in gm_pokemon}
 
@@ -6013,7 +6020,9 @@ def main():
     ap.add_argument("--cli", action="store_true", help="콘솔 CLI 모드 강제")
     ap.add_argument("pokemon", nargs="?", help="포켓몬 이름 (한글/영문)")
     ap.add_argument("ivs", nargs="*", help="개체값 3개 (공 방 체)")
-    ap.add_argument("--max-level", type=float, default=51.0, help="최대 레벨 (기본 51)")
+    ap.add_argument("--max-level", type=float, default=DEFAULT_MAX_LEVEL,
+                    help="최대 레벨 (기본 50 = Best Buddy 없이 도달 가능; "
+                         "Best Buddy 활성 시 51 지정)")
     ap.add_argument("--refresh", action="store_true",
                     help="시즌 데이터 강제 재다운로드 (gamemaster + rankings)")
     args = ap.parse_args()
