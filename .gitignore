@@ -5,6 +5,7 @@ team_meta-*.json
 korean_names.csv
 moves.csv
 move_names.csv
+pgoapi_pokedex.json
 raids.json
 kr_raids.json
 events.json

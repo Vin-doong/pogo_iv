@@ -13,9 +13,13 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
+import threading
+import time
 import urllib.request
 from collections import namedtuple
+from datetime import datetime
 
 if sys.platform == "win32":
     try:
@@ -41,6 +45,11 @@ SCRAPEDUCK_EGGS_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/da
 SCRAPEDUCK_RESEARCH_URL = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/research.json"
 SCRAPEDUCK_ROCKETS_URL  = "https://raw.githubusercontent.com/bigfoott/ScrapedDuck/data/rocketLineups.json"
 POGOMATE_RAIDS_URL = "https://pogomate.com/raids"
+# pokemon-go-api: 안정적 JSON 레이드 보스 소스 (한글명·티어·CP 내장).
+# pogomate HTML 스크래핑이 깨질 때의 폴백으로 사용.
+POKEMONGOAPI_RAIDS_URL = "https://pokemon-go-api.github.io/pokemon-go-api/api/raidboss.json"
+# pokemon-go-api pokedex: PoGo 네이티브 한글명 (PokeAPI CSV 노후로 빠진 신규 종 보강용).
+POKEMONGOAPI_DEX_URL = "https://pokemon-go-api.github.io/pokemon-go-api/api/pokedex.json"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CACHE_GM = os.path.join(SCRIPT_DIR, "gamemaster.json")
@@ -53,6 +62,7 @@ CACHE_EGGS = os.path.join(SCRIPT_DIR, "eggs.json")
 CACHE_RESEARCH = os.path.join(SCRIPT_DIR, "research.json")
 CACHE_ROCKETS  = os.path.join(SCRIPT_DIR, "rocket_lineups.json")
 CACHE_KR_RAIDS = os.path.join(SCRIPT_DIR, "kr_raids.json")
+CACHE_PGOAPI_DEX = os.path.join(SCRIPT_DIR, "pgoapi_pokedex.json")
 SPRITE_DIR = os.path.join(SCRIPT_DIR, "sprites")
 FAVORITES_PATH = os.path.join(SCRIPT_DIR, "favorites.json")
 SETTINGS_PATH = os.path.join(SCRIPT_DIR, "settings.json")
@@ -121,8 +131,8 @@ CUP_KO = {
 LEAGUES: list[League] = list(_BUILTIN_LEAGUES)
 
 
-def init_leagues(gm):
-    """gamemaster.formats 에서 리그 목록을 동적으로 빌드. 빌트인 4개 + 시즌 컵."""
+def compute_leagues(gm):
+    """gm 에서 리그 목록을 계산해 새 리스트로 반환 (전역 LEAGUES 미변경 — 스레드 안전)."""
     seen = {(lg.cup_id, lg.cap) for lg in _BUILTIN_LEAGUES}
     # 빌트인 'all'/cap 과 동일한 풀인 cup_id 는 중복 (e.g. 'little' @ 500 == 'all' @ 500)
     SKIP_CUPS = {("little", 500)}
@@ -138,9 +148,14 @@ def init_leagues(gm):
         seen.add(key)
         ko = CUP_KO.get(key, f.get("title", cup))
         extras.append(League(ko, cup, cp))
+    return list(_BUILTIN_LEAGUES) + extras
+
+
+def init_leagues(gm):
+    """gamemaster.formats 에서 리그 목록을 동적으로 빌드. 빌트인 4개 + 시즌 컵."""
+    leagues = compute_leagues(gm)
     LEAGUES.clear()
-    LEAGUES.extend(_BUILTIN_LEAGUES)
-    LEAGUES.extend(extras)
+    LEAGUES.extend(leagues)
     return LEAGUES
 
 KOREAN_VARIANT_PREFIXES = [
@@ -354,14 +369,25 @@ def _download(url, dest):
         "User-Agent": "Mozilla/5.0 (pogo_iv.py)",
         "Accept": "application/json, text/csv, text/plain",
     })
-    with urllib.request.urlopen(req, timeout=30) as resp, open(dest, "wb") as f:
-        f.write(resp.read())
+    # 임시 파일에 받은 뒤 원자적 교체 — 다운로드가 중간에 끊겨도 기존
+    # 캐시(또는 빈 파일)가 손상되지 않게 한다. 실패 시 tmp 정리.
+    tmp = dest + ".tmp"
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp, open(tmp, "wb") as f:
+            f.write(resp.read())
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def _file_age_days(path):
     if not os.path.exists(path):
         return float("inf")
-    import time
     return (time.time() - os.path.getmtime(path)) / 86400.0
 
 
@@ -372,8 +398,6 @@ def _is_stale(path, max_age_days):
 def _format_age(path):
     if not os.path.exists(path):
         return "(없음)"
-    import time
-    from datetime import datetime
     mt = os.path.getmtime(path)
     return datetime.fromtimestamp(mt).strftime("%Y-%m-%d %H:%M")
 
@@ -381,7 +405,6 @@ def _format_age(path):
 def _freshness_label(path, prefix=""):
     """파일 마지막 수정 → ('5시간 전' 문구, 색상코드).
     < 1일 회색 · 1~7일 주황 · 7일+ 빨강 · 없음 빨강."""
-    import time
     if not os.path.exists(path):
         return (f"{prefix}없음", "#a00")
     age = time.time() - os.path.getmtime(path)
@@ -428,21 +451,35 @@ def load_gamemaster(force=False):
 
 
 def load_korean_dex_map(force=False):
-    """dex 번호 → 한글 베이스 이름."""
+    """dex 번호 → 한글 베이스 이름.
+    1차: PokeAPI CSV. 신규 종(CSV 노후로 누락)은 pokemon-go-api pokedex 로 보강."""
     _ensure_file(CACHE_KO, lambda p: _download(KOREAN_CSV_URL, p),
                  "한글 이름", STATIC_MAX_AGE_DAYS, force)
-    if not os.path.exists(CACHE_KO):
-        return {}
     dex_to_ko = {}
-    with open(CACHE_KO, encoding="utf-8") as f:
-        reader = csv.reader(f)
-        next(reader, None)
-        for row in reader:
-            if len(row) >= 3 and row[1] == "3":  # language_id 3 = Korean
-                try:
-                    dex_to_ko[int(row[0])] = row[2].strip()
-                except ValueError:
-                    pass
+    if os.path.exists(CACHE_KO):
+        with open(CACHE_KO, encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 3 and row[1] == "3":  # language_id 3 = Korean
+                    try:
+                        dex_to_ko[int(row[0])] = row[2].strip()
+                    except ValueError:
+                        pass
+    # 보강: CSV 에 없는 dex 번호만 pokemon-go-api 한글명으로 채움 (best-effort)
+    try:
+        _ensure_file(CACHE_PGOAPI_DEX,
+                     lambda p: _download(POKEMONGOAPI_DEX_URL, p),
+                     "한글 이름 보강", STATIC_MAX_AGE_DAYS, force)
+        if os.path.exists(CACHE_PGOAPI_DEX):
+            with open(CACHE_PGOAPI_DEX, encoding="utf-8") as f:
+                for entry in json.load(f):
+                    dex = entry.get("dexNr")
+                    ko = (entry.get("names") or {}).get("Korean")
+                    if dex and ko and dex not in dex_to_ko:
+                        dex_to_ko[dex] = ko.strip()
+    except Exception as e:
+        print(f"한글 이름 보강 실패 (무시): {e}")
     return dex_to_ko
 
 
@@ -769,15 +806,69 @@ def _parse_pogomate_raids_html(html):
     return results
 
 
+_PGOAPI_LEVEL_TO_TIER = {
+    "mega": "Mega Raids",
+    "lvl5": "5-Star Raids", "lvl3": "3-Star Raids", "lvl1": "1-Star Raids",
+    "shadow_lvl5": "5-Star Shadow Raids",
+    "shadow_lvl3": "3-Star Shadow Raids",
+    "shadow_lvl1": "1-Star Shadow Raids",
+}
+
+
+def _parse_pokemongoapi_raids(data):
+    """pokemon-go-api raidboss.json → pogomate/ScrapedDuck 호환 레이드 리스트.
+    글로벌 기준이지만 안정적 JSON + 한글명 내장이라 pogomate 폴백으로 사용."""
+    cur = data.get("currentList", {}) if isinstance(data, dict) else {}
+    results = []
+    for level_key, bosses in cur.items():
+        tier = _PGOAPI_LEVEL_TO_TIER.get(level_key, level_key)
+        for b in bosses or []:
+            names = b.get("names", {}) or {}
+            cp = b.get("cpRange") or [None, None]
+            cp_min = cp[0] if len(cp) > 0 else None
+            cp_max = cp[1] if len(cp) > 1 else None
+            results.append({
+                "name": names.get("English", b.get("id", "")),
+                "tier": tier,
+                # ScrapedDuck/pogomate 와 동일하게 소문자 타입 name
+                "types": [{"name": str(t).lower()} for t in (b.get("types") or [])],
+                "canBeShiny": bool(b.get("shiny")),
+                "combatPower": {
+                    "normal": {"min": cp_min, "max": cp_max} if cp_min else {}
+                },
+                "_source": "pokemon-go-api",
+                "_name_ko": names.get("Korean", ""),
+                "_period": "",
+                "_slug": (b.get("form") or b.get("id") or "").lower(),
+            })
+    return results
+
+
 def _kr_raids_downloader(dest):
-    """pogomate.com/raids 다운로드 → 파싱 → kr_raids.json 저장."""
-    req = urllib.request.Request(POGOMATE_RAIDS_URL,
-                                  headers={"User-Agent": "Mozilla/5.0 (pogo_iv.py)"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        html = resp.read().decode("utf-8", errors="replace")
-    parsed = _parse_pogomate_raids_html(html)
-    with open(dest, "w", encoding="utf-8") as f:
-        json.dump(parsed, f, ensure_ascii=False, indent=2)
+    """한국 레이드 보스 다운로드 → kr_raids.json 저장.
+    1차: pogomate.com/raids 스크래핑. 실패하거나 빈 결과면
+    2차: pokemon-go-api raidboss.json (안정적 JSON 폴백)."""
+    parsed = []
+    try:
+        req = urllib.request.Request(
+            POGOMATE_RAIDS_URL,
+            headers={"User-Agent": "Mozilla/5.0 (pogo_iv.py)"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+        parsed = _parse_pogomate_raids_html(html)
+    except Exception as e:
+        print(f"pogomate 레이드 스크래핑 실패 — pokemon-go-api 폴백: {e}")
+
+    if not parsed:
+        # 폴백: 안정적 JSON 소스. 여기서도 실패하면 예외 → 기존 캐시 유지.
+        req = urllib.request.Request(
+            POKEMONGOAPI_RAIDS_URL,
+            headers={"User-Agent": "Mozilla/5.0 (pogo_iv.py)"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+        parsed = _parse_pokemongoapi_raids(data)
+
+    _atomic_write_json(dest, parsed)
 
 
 def load_kr_raids(force=False):
@@ -847,8 +938,29 @@ def load_combined_raids(force=False):
     return merged
 
 
+def download_all_data():
+    """모든 데이터 파일을 디스크로 강제 재다운로드. 전역 메모리 상태는 건드리지 않음.
+    (백그라운드 워커 스레드 안전용 — init_leagues/전역 dict 재구성은 메인 스레드 책임.)
+    """
+    gm = load_gamemaster(force=True)
+    load_korean_dex_map(force=True)
+    load_move_ko_map(force=True)
+    load_raid_bosses(force=True)
+    load_kr_raids(force=True)
+    load_events(force=True)
+    load_eggs(force=True)
+    load_research(force=True)
+    load_rocket_lineups(force=True)
+    # 리그 랭킹 — gm 에서 리그 목록을 로컬 계산 (전역 LEAGUES 미변경)
+    for lg in compute_leagues(gm):
+        try:
+            load_league_rankings(lg.cup_id, lg.cap, force=True)
+        except Exception as e:
+            print(f"랭킹 다운로드 실패 {lg.name}: {e}")
+
+
 def refresh_all_data():
-    """모든 시즌별 데이터 강제 재다운로드. gm 갱신 후 LEAGUES 재구성."""
+    """모든 시즌별 데이터 강제 재다운로드. gm 갱신 후 LEAGUES 재구성. (메인 스레드 전용)"""
     gm = load_gamemaster(force=True)
     init_leagues(gm)
     load_korean_dex_map(force=True)
@@ -866,7 +978,8 @@ def refresh_all_data():
 def data_status():
     """[(label, path, age_days), ...] — 각 데이터 파일 현황."""
     items = [("게임마스터", CACHE_GM), ("한글 이름", CACHE_KO),
-             ("기술 한글", CACHE_MOVE_NAMES),
+             ("한글 이름(보강)", CACHE_PGOAPI_DEX),
+             ("기술 슬러그", CACHE_MOVES), ("기술 한글", CACHE_MOVE_NAMES),
              ("레이드(글로벌)", CACHE_RAIDS), ("레이드(한국)", CACHE_KR_RAIDS),
              ("이벤트", CACHE_EVENTS),
              ("알 부화", CACHE_EGGS), ("리서치", CACHE_RESEARCH),
@@ -888,10 +1001,18 @@ def load_favorites():
         return set()
 
 
+def _atomic_write_json(path, obj):
+    """tmp 파일에 쓰고 os.replace 로 교체 — 쓰는 도중 종료/크래시 시
+    기존 파일이 잘려 통째로 손실되는 것을 막는다."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
 def save_favorites(species_set):
     try:
-        with open(FAVORITES_PATH, "w", encoding="utf-8") as f:
-            json.dump({"species": sorted(species_set)}, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(FAVORITES_PATH, {"species": sorted(species_set)})
     except Exception as e:
         print(f"즐겨찾기 저장 실패: {e}")
 
@@ -908,8 +1029,7 @@ def load_settings():
 
 def save_settings(settings):
     try:
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
+        _atomic_write_json(SETTINGS_PATH, settings)
     except Exception as e:
         print(f"설정 저장 실패: {e}")
 
@@ -1219,7 +1339,7 @@ def _combo_dps(fast_dmg, fast_cd_s, fast_egain, charged_dmg, charged_cd_s, charg
 
 def attacker_dps_vs(attacker, fast, charged, boss_types,
                     boss_cpm=0.79, boss_base_def=180, weather=None,
-                    attacker_level=50):
+                    attacker_level=50, boss_base_atk=None):
     """공격자 1마리 × (속공, 차지) 조합 → DPS / TDO / eDPS.
     attacker: PvPoke pokemon 엔트리. fast/charged: gamemaster moves 엔트리.
     boss_types: 보스 타입 list (소문자, 'none' 허용).
@@ -1251,9 +1371,9 @@ def attacker_dps_vs(attacker, fast, charged, boss_types,
                      charged_dmg, charged.get("cooldown", 500) / 1000.0,
                      charged.get("energy", 0))
     # TDO 근사: HP * DPS / 보스가 1초당 우리에게 입히는 추정데미지
-    # 단순화: 보스 base atk 대비 우리 def 비율 사용. 정확도 보다는 ranking 보조용.
-    boss_atk_assumed = boss_base_def * 1.5  # 대략 atk ≈ def * 1.5
-    incoming_dps = max(1.0, boss_atk_assumed * boss_cpm / def_eff * 35.0)
+    # 보스 실제 base atk 사용 (없으면 def*1.5 로 폴백). 정확도 보다는 ranking 보조용.
+    boss_atk = boss_base_atk if boss_base_atk else boss_base_def * 1.5
+    incoming_dps = max(1.0, boss_atk * boss_cpm / def_eff * 35.0)
     survival_s = hp / incoming_dps
     tdo = dps * survival_s
     edps = (dps * tdo) ** 0.5 if tdo > 0 else 0.0
@@ -1262,7 +1382,8 @@ def attacker_dps_vs(attacker, fast, charged, boss_types,
 
 
 def best_moveset_vs(attacker, boss_types, moves_by_id, boss_cpm=0.79,
-                    boss_base_def=180, weather=None, attacker_level=50):
+                    boss_base_def=180, weather=None, attacker_level=50,
+                    boss_base_atk=None):
     """공격자의 모든 (속공×차지) 조합 중 eDPS 최고 무브셋 반환."""
     fasts = (attacker.get("fastMoves") or []) + (attacker.get("eliteMoves") or [])
     chargeds = (attacker.get("chargedMoves") or []) + (attacker.get("eliteMoves") or [])
@@ -1276,7 +1397,8 @@ def best_moveset_vs(attacker, boss_types, moves_by_id, boss_cpm=0.79,
             if not c or c.get("energy", 0) <= 0:
                 continue
             r = attacker_dps_vs(attacker, f, c, boss_types,
-                                boss_cpm, boss_base_def, weather, attacker_level)
+                                boss_cpm, boss_base_def, weather, attacker_level,
+                                boss_base_atk)
             if best is None or r["edps"] > best["edps"]:
                 best = {**r, "fast_id": fid, "charged_id": cid,
                         "fast_type": f.get("type", ""), "charged_type": c.get("type", "")}
@@ -1292,6 +1414,7 @@ def top_counters(boss, gm, moves_by_id, n=20, weather=None,
     force_boss_cpm: 지정 시 티어 추정 무시하고 이 CPM 사용 (예: 맥스 배틀 1.0)."""
     boss_types = [t for t in boss.get("types", []) if t and t != "none"]
     boss_base_def = boss.get("baseStats", {}).get("def", 180)
+    boss_base_atk = boss.get("baseStats", {}).get("atk")  # 실제 공격력 (TDO 정확도)
     boss_sid = boss.get("speciesId", "")
     if force_boss_cpm is not None:
         boss_cpm = force_boss_cpm
@@ -1318,7 +1441,8 @@ def top_counters(boss, gm, moves_by_id, n=20, weather=None,
             if "legendary" in tags or "mythical" in tags:
                 continue
         bm = best_moveset_vs(p, boss_types, moves_by_id, boss_cpm,
-                             boss_base_def, weather, attacker_level)
+                             boss_base_def, weather, attacker_level,
+                             boss_base_atk)
         if bm is None:
             continue
         results.append({"sid": sid, "pokemon": p, **bm})
@@ -2150,7 +2274,9 @@ def find_iv_candidates(base, displayed_cp, displayed_hp, level_range=None,
         lo, hi = 0, max_idx
     else:
         lo, hi = level_range
-        hi = min(hi, max_idx)
+        # 사용자 입력 레벨이 범위를 벗어나도 안전하게 클램프 (음수 idx → 잘못된 결과 방지)
+        lo = max(0, min(lo, max_idx))
+        hi = max(lo, min(hi, max_idx))
     out = []
     for idx in range(lo, hi + 1):
         cpm = CPM[idx]
@@ -2397,6 +2523,9 @@ def run_gui(gm):
     # Move data lookup (gamemaster)
     moves_by_id = {m["moveId"]: m for m in gm.get("moves", [])}
 
+    # speciesId → pokemon 엔트리 (선택/IV 입력 hot path 에서 O(n) 선형 스캔 제거)
+    sid_to_pokemon = {p.get("speciesId"): p for p in gm.get("pokemon", [])}
+
     # 기술 ID → 한글명 (여러 refresh 함수에서 공통 사용)
     def move_ko(mid):
         k = mid.lower().replace("_", "-")
@@ -2497,6 +2626,19 @@ def run_gui(gm):
         root.geometry(geom)
     except Exception:
         root.geometry("1500x920")
+    # 저장된 위치가 화면 밖이면 (모니터 변경/해상도 변경 등) 다시 보이는 곳으로.
+    # 안 그러면 창이 보이지 않는 좌표에 떠서 "앱이 안 켜진다"로 오인됨.
+    try:
+        m = re.match(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)", geom)
+        if m:
+            w, h, x, y = (int(m.group(1)), int(m.group(2)),
+                          int(m.group(3)), int(m.group(4)))
+            sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+            # 창의 상당 부분이 화면 안에 보이는지 확인 (제목표시줄 ~40px 여유)
+            if x + w < 60 or x > sw - 60 or y < 0 or y > sh - 60:
+                root.geometry(f"{min(w, sw)}x{min(h, sh)}+50+50")
+    except Exception:
+        pass
     root.minsize(1360, 800)
 
     try:
@@ -2544,6 +2686,36 @@ def run_gui(gm):
         ttk.Checkbutton(cat_row, text=txt, variable=var,
                         command=lambda: trigger_search()).pack(side="left", padx=(0, 6))
 
+    # 베스트 친구(Lv51) 토글 — 켜면 IV 랭킹/내 IV 계산 캡을 Lv50 → Lv51 로.
+    # PvPoke 등 기본은 Lv50, 베스트버디 보너스(+1)는 Lv51. 요약표의 'Lv' 열로 구분됨.
+    best_buddy_var = tk.BooleanVar(value=settings.get("best_buddy", False))
+
+    def current_max_idx():
+        return 100 if best_buddy_var.get() else DEFAULT_MAX_IDX
+
+    def _on_best_buddy_toggle():
+        try:
+            settings["best_buddy"] = bool(best_buddy_var.get())
+            save_settings(settings)
+        except Exception:
+            pass
+        # 캡이 바뀌면 캐시된 랭킹은 무효 → 비우고 현재 뷰 재계산
+        _ranking_lru.clear()
+        _ranking_lru_order.clear()
+        ranking_cache.clear()
+        for _fn in (refresh, refresh_reverse):
+            try:
+                _fn()
+            except Exception as e:
+                print(f"베스트버디 토글 갱신 실패: {e}")
+
+    bb_row = ttk.Frame(left)
+    bb_row.pack(anchor="w", pady=(0, 4))
+    ttk.Checkbutton(bb_row, text="베스트 친구(Lv51)", variable=best_buddy_var,
+                    command=_on_best_buddy_toggle).pack(side="left")
+    ttk.Label(bb_row, text="끄면 Lv50 캡", font=("", 8),
+              foreground="#999").pack(side="left", padx=(4, 0))
+
     list_frame = ttk.Frame(left)
     list_frame.pack(fill="both", expand=True)
     list_scroll = ttk.Scrollbar(list_frame, orient="vertical")
@@ -2575,8 +2747,9 @@ def run_gui(gm):
     update_data_status_label()
     ttk.Label(left, textvariable=data_status_var, font=("", 8),
               foreground="#666").pack(anchor="w")
-    ttk.Button(left, text="데이터 업데이트",
-               command=lambda: do_data_refresh()).pack(fill="x", pady=(4, 0))
+    data_refresh_btn = ttk.Button(left, text="데이터 업데이트",
+                                  command=lambda: do_data_refresh())
+    data_refresh_btn.pack(fill="x", pady=(4, 0))
 
     # ===== Right: league + results =====
     right = ttk.Frame(root, padding=(6, 12, 12, 12))
@@ -3576,6 +3749,17 @@ def run_gui(gm):
             topn = 10000 if raid_topn_var.get() == "전체" else int(raid_topn_var.get())
         except ValueError:
             topn = 20
+        # 보스 티어별 CPM — 1·3성 보스를 5성 CPM(0.5793)으로 계산하면 카운터 수치가
+        # 과대평가되므로 실제 티어를 반영한다. 5성/메가/엘리트/그림자는 top_counters
+        # 의 sid 기반 분기(메가 여부)에 맡기려 None 으로 둔다.
+        if is_max_mode:
+            force_cpm = 1.0
+        elif "1-Star" in tier_label:
+            force_cpm = RAID_TIER_CPM["1"]
+        elif "3-Star" in tier_label:
+            force_cpm = RAID_TIER_CPM["3"]
+        else:
+            force_cpm = None
         cnt = top_counters(
             boss_p, state["gm"], moves_by_id, n=topn,
             weather=weather,
@@ -3583,7 +3767,7 @@ def run_gui(gm):
             include_mega=inc_mega_var.get(),
             include_legendary=inc_legend_var.get(),
             favorites_only=favs,
-            force_boss_cpm=(1.0 if is_max_mode else None),
+            force_boss_cpm=force_cpm,
             attacker_level=atk_lv,
         )
         for i, c in enumerate(cnt, 1):
@@ -3714,8 +3898,7 @@ def run_gui(gm):
         sid = display_to_sid.get(disp)
         if not sid:
             return None
-        return next((p for p in state["gm"]["pokemon"]
-                     if p.get("speciesId") == sid), None)
+        return sid_to_pokemon.get(sid)
 
     def _dps_target_types():
         """타겟 방어 타입을 list 로. (중립) → []"""
@@ -4009,31 +4192,62 @@ def run_gui(gm):
                 return
             _schedule_refresh()
 
+    refresh_in_flight = [False]  # 데이터 갱신 중복 실행 가드 (버튼+Ctrl-R 공유)
+
     def do_data_refresh():
+        # 중복 실행 가드 — 버튼 비활성화는 키바인드(Ctrl-R)를 막지 못하므로 플래그로 이중 잠금.
+        if refresh_in_flight[0]:
+            return
         if not messagebox.askyesno("데이터 업데이트",
                                    "PvPoke 시즌 데이터 + 일정/메타/팀 데이터를 모두 다시 다운로드합니다.\n"
                                    "(인터넷 연결 필요, 약 10~30초)\n\n계속할까요?"):
             return
-        data_status_var.set("⟳ 갱신 중…")
-        root.update_idletasks()
+        refresh_in_flight[0] = True
+        data_status_var.set("⟳ 갱신 중… (다운로드)")
+        data_refresh_btn.configure(state="disabled")
+
+        # 다운로드는 백그라운드 스레드에서 — UI 가 멈추지 않게.
+        # 워커는 *디스크 다운로드만* 수행 (download_all_data: 전역 메모리 미변경).
+        # 전역 LEAGUES/rankings 재구성은 메인 스레드(_apply_refresh_body)에서만 —
+        # 700ms 폴링이 같은 전역을 읽으므로 워커가 건드리면 경쟁 상태 발생.
+        def _worker():
+            err = None
+            try:
+                download_all_data()
+                # 팀 메타 — 빌트인 4리그 강제 갱신 (download_all_data 에는 없음, 전역 미변경)
+                for lg in _BUILTIN_LEAGUES:
+                    cap = lg.cap if lg.cap else 10000
+                    try:
+                        load_team_meta("all", cap, force=True)
+                    except Exception as e:
+                        print(f"팀메타 갱신 실패 {lg.name}: {e}")
+            except Exception as e:
+                err = e
+            root.after(0, lambda: _apply_refresh(err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_refresh(err):
         try:
-            refresh_all_data()
-            # 팀 메타 — 빌트인 4리그 강제 갱신 (refresh_all_data 에는 없음)
-            for lg in _BUILTIN_LEAGUES:
-                cap = lg.cap if lg.cap else 10000
-                try:
-                    load_team_meta("all", cap, force=True)
-                except Exception as e:
-                    print(f"팀메타 갱신 실패 {lg.name}: {e}")
-        except Exception as e:
-            messagebox.showerror("실패", f"갱신 실패: {e}")
-            update_data_status_label()
-            return
+            if err is not None:
+                messagebox.showerror("실패", f"갱신 실패: {err}")
+                update_data_status_label()
+                return
+            data_status_var.set("⟳ 적용 중…")
+            root.update_idletasks()
+            _apply_refresh_body()
+        finally:
+            data_refresh_btn.configure(state="normal")
+            refresh_in_flight[0] = False
+
+    def _apply_refresh_body():
         # 새 데이터 반영
         new_gm = load_gamemaster()
         state["gm"] = new_gm
         moves_by_id.clear()
         moves_by_id.update({m["moveId"]: m for m in new_gm.get("moves", [])})
+        sid_to_pokemon.clear()
+        sid_to_pokemon.update({p.get("speciesId"): p for p in new_gm.get("pokemon", [])})
         new_dex_to_ko = load_korean_dex_map()
         new_entries = build_display_entries(new_gm, new_dex_to_ko)
         display_to_sid.clear()
@@ -4095,35 +4309,19 @@ def run_gui(gm):
         except Exception as e:
             print(f"로켓 뷰 갱신 실패: {e}")
 
-        # PvP/PvE 뷰 갱신
-        try:
-            refresh_meta(force=True)
-        except Exception:
-            pass
-        try:
-            refresh_compare()
-        except Exception:
-            pass
-        try:
-            refresh_reverse()
-        except Exception:
-            pass
-        try:
-            refresh_counters()
-        except Exception:
-            pass
-        try:
-            refresh_pve_dps()
-        except Exception:
-            pass
-        try:
-            refresh_rocket()
-        except Exception:
-            pass
-        try:
-            _refresh_team_meta(force=False)  # 파일은 위에서 이미 force 다운로드함
-        except Exception:
-            pass
+        # PvP/PvE 뷰 갱신 — 한 탭이 깨져도 나머지는 갱신되도록 개별 보호.
+        # 실패는 콘솔에 로깅(조용히 삼키면 어느 탭이 깨졌는지 진단 불가).
+        for _name, _fn in (("PvP 메타", lambda: refresh_meta(force=True)),
+                           ("PvP 비교", refresh_compare),
+                           ("역검색", refresh_reverse),
+                           ("레이드 카운터", refresh_counters),
+                           ("PvE DPS", refresh_pve_dps),
+                           ("로켓", refresh_rocket),
+                           ("팀 메타", lambda: _refresh_team_meta(force=False))):
+            try:
+                _fn()
+            except Exception as e:
+                print(f"{_name} 뷰 갱신 실패: {e}")
 
         update_data_status_label()
         update_listbox(force=True, auto_select=False)
@@ -4186,7 +4384,7 @@ def run_gui(gm):
                 pass
             _ranking_lru_order.insert(0, sid)
             return cached
-        max_idx = DEFAULT_MAX_IDX
+        max_idx = current_max_idx()
         data = {}
         for lg in LEAGUES:
             r = rank_all(base, lg.cap, max_idx)
@@ -5440,7 +5638,7 @@ def run_gui(gm):
 
         disp = strip_star(listbox.get(sel[0]))
         sid = display_to_sid.get(disp)
-        pokemon = next((p for p in state["gm"]["pokemon"] if p.get("speciesId") == sid), None)
+        pokemon = sid_to_pokemon.get(sid)
         if not pokemon:
             return
         base = pokemon["baseStats"]
@@ -5646,7 +5844,7 @@ def run_gui(gm):
             return
         user_iv = (a, d, h)
         topn = max(50, min(500, rev_topn_var.get() or 200))
-        max_idx = DEFAULT_MAX_IDX
+        max_idx = current_max_idx()
         gm_pokemon = state["gm"]["pokemon"]
         by_sid = {p["speciesId"]: p for p in gm_pokemon}
 
@@ -5718,7 +5916,7 @@ def run_gui(gm):
             return
         disp = strip_star(listbox.get(sel[0]))
         sid = display_to_sid.get(disp)
-        pokemon = next((p for p in state["gm"]["pokemon"] if p.get("speciesId") == sid), None)
+        pokemon = sid_to_pokemon.get(sid)
         if not pokemon:
             cp_status_var.set("포켓몬 정보를 찾을 수 없음.")
             return
@@ -5733,11 +5931,14 @@ def run_gui(gm):
         if lv_s:
             try:
                 lv = float(lv_s)
-                idx = idx_from_level(lv)
-                level_range = (idx, idx)
             except ValueError:
                 cp_status_var.set("Lv 형식 오류 — 비워두면 전체 레벨 검색.")
                 return
+            if not (1.0 <= lv <= 51.0):
+                cp_status_var.set("Lv 은 1~51 범위로 입력하세요 (비워두면 전체 레벨 검색).")
+                return
+            idx = idx_from_level(lv)
+            level_range = (idx, idx)
         base = pokemon["baseStats"]
         cands = find_iv_candidates(base, cp_in, hp_in, level_range=level_range)
         if not cands:
@@ -5770,6 +5971,15 @@ def run_gui(gm):
     # IME(한글) 조합 중에는 entry.get()이 비어있어서 실시간 필터링이 어려움.
     # → Enter 또는 검색 버튼으로 강제 확정. 폴링은 commit 후 반영 백업용 (느슨한 주기).
     def trigger_search():
+        # 즐겨찾기/분류 필터는 변경 즉시 저장 — 종료 방식에 상관없이 마지막 상태 유지
+        try:
+            settings["fav_only"]    = bool(fav_only_var.get())
+            settings["show_normal"] = bool(show_normal_var.get())
+            settings["show_shadow"] = bool(show_shadow_var.get())
+            settings["show_mega"]   = bool(show_mega_var.get())
+            save_settings(settings)
+        except Exception:
+            pass
         update_listbox(force=True)
 
     def poll():
@@ -5981,6 +6191,7 @@ def run_gui(gm):
         try:
             settings["geometry"] = root.geometry()
             settings["fav_only"] = bool(fav_only_var.get())
+            settings["best_buddy"] = bool(best_buddy_var.get())
             settings["show_normal"] = bool(show_normal_var.get())
             settings["show_shadow"] = bool(show_shadow_var.get())
             settings["show_mega"]   = bool(show_mega_var.get())

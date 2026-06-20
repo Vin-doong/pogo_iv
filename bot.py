@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import os
 import sys
 import traceback
@@ -108,7 +109,8 @@ def _tool(fn):
     return wrapper
 
 @_tool
-def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15) -> str:
+def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15,
+                    best_buddy: bool = False) -> str:
     """포켓몬의 IV(개체값) 분석 + 각 PvP 리그(리틀/슈퍼/하이퍼/마스터)에서의 순위/CP/최적 레벨.
 
     다음과 같은 질문에 모두 이 도구를 써:
@@ -121,6 +123,7 @@ def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15) -
         atk: 사용자 공격 IV (0~15). 사용자가 IV 안 알려줬으면 15 그대로 둬.
         defense: 사용자 방어 IV (0~15). 사용자가 IV 안 알려줬으면 15 그대로 둬.
         hp: 사용자 체력 IV (0~15). 사용자가 IV 안 알려줬으면 15 그대로 둬.
+        best_buddy: 베스트 친구(절친) 보너스로 Lv51 까지 강화 가능할 때 True. 기본은 False(Lv50 캡, PvPoke 기준). 사용자가 "베스트버디"/"절친"/"Lv51" 언급 시에만 True.
 
     Returns:
         리그별로 사용자 IV 의 순위/CP + 그 리그의 최적(1등) IV 조합 텍스트.
@@ -129,7 +132,9 @@ def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15) -
     if not p:
         return f"'{name}' 포켓몬을 찾을 수 없음. 한글 이름으로 다시 시도해줘."
     ivs = (max(0, min(15, atk)), max(0, min(15, defense)), max(0, min(15, hp)))
-    rows, best = P.analyze_pokemon(p, ivs, max_level=51)
+    # 기본 캡은 Lv50 (PvPoke/데스크톱 앱과 일치). 베스트버디일 때만 Lv51.
+    max_level = 51.0 if best_buddy else P.DEFAULT_MAX_LEVEL
+    rows, best = P.analyze_pokemon(p, ivs, max_level=max_level)
     label = P.appraisal_label(ivs)
     sid = p["speciesId"]
 
@@ -152,7 +157,8 @@ def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15) -
                 return (i, len(ranking), e.get("score", 0))
         return ("권외", len(ranking), 0)
 
-    lines = [f"**{_display(p)}** — {label} (입력 IV {ivs[0]}/{ivs[1]}/{ivs[2]})"]
+    cap_note = "Lv51·베스트버디" if best_buddy else "Lv50 캡"
+    lines = [f"**{_display(p)}** — {label} (입력 IV {ivs[0]}/{ivs[1]}/{ivs[2]} · {cap_note})"]
     for league_name, lvl, cp, sp, rank, pct, top_iv in rows:
         if lvl is None:
             lines.append(f"  · {league_name}: 분석 불가 (CP 캡 초과)")
@@ -390,6 +396,32 @@ def current_events(only_active: bool = True) -> str:
 TOOLS = [analyze_pokemon, find_acquisition, top_counters, current_raids, current_events, league_meta]
 TOOL_MAP = {fn.__name__: fn for fn in TOOLS}
 
+# 도구별 (파라미터명 → 타입 어노테이션) — 모델 인자 검증/형변환용 (시작 시 1회 계산)
+_TOOL_PARAMS = {
+    name: {p.name: p.annotation for p in inspect.signature(fn).parameters.values()}
+    for name, fn in TOOL_MAP.items()
+}
+
+
+def _clean_args(fname, fargs):
+    """Gemini 가 만든 인자를 함수 시그니처에 맞게 정제.
+    - 시그니처에 없는 키 제거 (TypeError 방지)
+    - int 파라미터에 들어온 float/str 을 int 로 강제 (실패 시 키 드롭)"""
+    params = _TOOL_PARAMS.get(fname, {})
+    cleaned = {}
+    for k, v in fargs.items():
+        if k not in params:
+            print(f"[gemini→tool] {fname}: 알 수 없는 인자 '{k}' 무시", flush=True)
+            continue
+        if params[k] is int and not isinstance(v, bool):
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                print(f"[gemini→tool] {fname}: '{k}'={v!r} int 변환 실패 — 무시", flush=True)
+                continue
+        cleaned[k] = v
+    return cleaned
+
 
 # ───────────── Gemini 클라이언트 + 시스템 프롬프트 ─────────────
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -505,8 +537,11 @@ async def ask_gemini(user_message: str, history: list | None = None) -> str:
         function_calls = [p.function_call for p in candidate.content.parts if getattr(p, "function_call", None)]
 
         if not function_calls:
-            # 도구 호출 없음 = 최종 답변
-            text = (response.text or "").strip()
+            # 도구 호출 없음 = 최종 답변.
+            # response.text 는 비텍스트 파트가 섞이면 ValueError 를 던지므로 직접 조립.
+            text = "".join(
+                p.text for p in candidate.content.parts if getattr(p, "text", None)
+            ).strip()
             return text or "(답변을 생성하지 못했어. 다시 시도해줘.)"
 
         # 모델의 function_call turn 을 history 에 추가
@@ -523,7 +558,7 @@ async def ask_gemini(user_message: str, history: list | None = None) -> str:
                 result = f"[알 수 없는 도구] {fname}"
             else:
                 try:
-                    result = await asyncio.to_thread(fn, **fargs)
+                    result = await asyncio.to_thread(fn, **_clean_args(fname, fargs))
                 except Exception as e:
                     print(f"[tool 예외] {fname}: {type(e).__name__}: {e}", flush=True)
                     traceback.print_exc()
@@ -544,6 +579,12 @@ bot = discord.Client(intents=intents)
 # 채널별 대화 히스토리 (멀티턴 대화). 최근 4 turns 보관.
 CHANNEL_HISTORY: dict[int, list] = {}
 HISTORY_MAX_TURNS = 4  # user+model 페어 4개 = 8 메시지
+HISTORY_MAX_CHANNELS = 200  # 히스토리 dict 무한 증가 방지 (LRU 상한)
+
+# ── Rate limit: 무료 티어 한도 보호 + 스팸 방지 ──
+COOLDOWN_SECONDS = 3.0          # 사용자별 최소 요청 간격
+_last_request: dict[int, float] = {}  # user_id -> monotonic ts
+_in_flight: set[int] = set()          # 현재 처리 중인 채널 id
 
 
 @bot.event
@@ -559,7 +600,8 @@ def _strip_mention(content: str, bot_id: int) -> str:
 
 
 def _split_long(text: str, limit: int = 1900) -> list[str]:
-    """디스코드 2000자 제한 회피용 분할."""
+    """디스코드 2000자 제한 회피용 분할. 코드블록(```) 중간에서 잘리면
+    해당 청크를 닫고 다음 청크에서 다시 열어 포맷이 깨지지 않게 한다."""
     if len(text) <= limit:
         return [text]
     chunks = []
@@ -573,7 +615,19 @@ def _split_long(text: str, limit: int = 1900) -> list[str]:
             cut = limit
         chunks.append(text[:cut])
         text = text[cut:].lstrip("\n")
-    return chunks
+    # 코드블록 균형 보정 — 청크 내 ``` 개수가 홀수면 펜스가 열린 채 끝난 것
+    fixed = []
+    carry_open = False
+    for ch in chunks:
+        if carry_open:
+            ch = "```\n" + ch
+        # 이 청크 안의 펜스 개수로 끝 상태 판단
+        open_now = (ch.count("```") % 2 == 1)
+        if open_now:
+            ch = ch + "\n```"
+        fixed.append(ch)
+        carry_open = open_now
+    return fixed
 
 
 @bot.event
@@ -618,29 +672,64 @@ async def on_message(message: discord.Message):
         await message.reply("대화 컨텍스트를 초기화했어. 다음 질문부터 새로 시작.", mention_author=False)
         return
 
-    history = CHANNEL_HISTORY.get(message.channel.id, [])
-    async with message.channel.typing():
-        try:
-            answer = await ask_gemini(content, history=history)
-            # 성공 시에만 히스토리에 추가 (에러는 컨텍스트 오염 방지)
-            history = history + [
-                types.Content(role="user", parts=[types.Part.from_text(text=content)]),
-                types.Content(role="model", parts=[types.Part.from_text(text=answer)]),
-            ]
-            CHANNEL_HISTORY[message.channel.id] = history[-HISTORY_MAX_TURNS * 2:]
-        except Exception as e:
-            print(f"[bot] Gemini 오류: {e}", flush=True)
-            traceback.print_exc()
-            msg = str(e)
-            if "503" in msg or "UNAVAILABLE" in msg:
-                answer = "⚠️ Gemini 무료 티어가 지금 혼잡해서 응답을 못 받았어. 1~2분 후 다시 물어봐줘."
-            elif "RESOURCE_EXHAUSTED" in msg or "429" in msg:
-                answer = "⚠️ 무료 티어 분당 호출 한도(15회/분)에 걸렸어. 1분 뒤에 다시 시도해줘."
-            else:
-                answer = f"⚠️ 에러: `{type(e).__name__}: {str(e)[:200]}`"
+    # ── Rate limit: 사용자별 쿨다운 + 채널 동시 처리 가드 ──
+    now = asyncio.get_running_loop().time()
+    last = _last_request.get(message.author.id, 0.0)
+    if now - last < COOLDOWN_SECONDS:
+        wait = COOLDOWN_SECONDS - (now - last)
+        await message.reply(f"잠깐만 — {wait:.0f}초 뒤에 다시 물어봐줘.",
+                            mention_author=False)
+        return
+    if message.channel.id in _in_flight:
+        await message.reply("아직 이전 질문을 처리 중이야. 잠깐만 기다려줘.",
+                            mention_author=False)
+        return
+    _last_request[message.author.id] = now
+    # 만료된 쿨다운 항목 정리 — dict 무한 증가 방지 (쿨다운 지난 유저는 더 이상 필요 없음)
+    if len(_last_request) > 256:
+        for uid in [u for u, t in _last_request.items() if now - t >= COOLDOWN_SECONDS]:
+            _last_request.pop(uid, None)
+    _in_flight.add(message.channel.id)
 
-    for chunk in _split_long(answer):
-        await message.reply(chunk, mention_author=False)
+    history = CHANNEL_HISTORY.get(message.channel.id, [])
+    try:
+        async with message.channel.typing():
+            try:
+                answer = await ask_gemini(content, history=history)
+                # 성공 시에만 히스토리에 추가 (에러는 컨텍스트 오염 방지)
+                history = history + [
+                    types.Content(role="user", parts=[types.Part.from_text(text=content)]),
+                    types.Content(role="model", parts=[types.Part.from_text(text=answer)]),
+                ]
+                CHANNEL_HISTORY[message.channel.id] = history[-HISTORY_MAX_TURNS * 2:]
+                # 채널 수 상한 — 가장 오래된 채널부터 제거 (메모리 누수 방지)
+                if len(CHANNEL_HISTORY) > HISTORY_MAX_CHANNELS:
+                    for old_cid in list(CHANNEL_HISTORY)[:-HISTORY_MAX_CHANNELS]:
+                        CHANNEL_HISTORY.pop(old_cid, None)
+            except Exception as e:
+                print(f"[bot] Gemini 오류: {e}", flush=True)
+                traceback.print_exc()
+                msg = str(e)
+                if "503" in msg or "UNAVAILABLE" in msg:
+                    answer = "⚠️ Gemini 무료 티어가 지금 혼잡해서 응답을 못 받았어. 1~2분 후 다시 물어봐줘."
+                elif "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                    answer = "⚠️ 무료 티어 분당 호출 한도(15회/분)에 걸렸어. 1분 뒤에 다시 시도해줘."
+                else:
+                    answer = f"⚠️ 에러: `{type(e).__name__}: {str(e)[:200]}`"
+    finally:
+        _in_flight.discard(message.channel.id)
+
+    chunks = _split_long(answer)
+    try:
+        for i, chunk in enumerate(chunks):
+            # 첫 청크만 멘션 답장, 나머지는 일반 전송 (알림 스팸 방지)
+            if i == 0:
+                await message.reply(chunk, mention_author=False)
+            else:
+                await message.channel.send(chunk)
+    except discord.HTTPException as e:
+        # 권한 없음/채널 삭제/2000자 초과 등 — 핸들러 밖으로 새지 않게 로깅만
+        print(f"[bot] 메시지 전송 실패: {type(e).__name__}: {e}", flush=True)
 
 
 if __name__ == "__main__":
