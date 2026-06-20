@@ -4398,6 +4398,67 @@ def run_gui(gm):
         except Exception:
             return iso_str[:16]
 
+    def _translate_event_name(name):
+        """이벤트 영문 이름 → 한글. 반복 패턴(커뮤니티 데이/스포트라이트/레이드류 등)만
+        규칙 번역하고, 포켓몬 이름은 _en_to_display 로 변환. 매칭 실패 시 영문 그대로."""
+        if not name:
+            return name
+        s = name.strip()
+
+        def _ko1(p):
+            return _en_to_display(p.strip()) or p.strip()
+
+        def _ko_multi(seg):
+            parts = [p for p in re.split(r",\s*|\s+and\s+", seg) if p.strip()]
+            return " · ".join(_ko1(p) for p in parts)
+
+        rules = [
+            (r"^(.+?) Community Day(?: Classic)?$", lambda m: f"{_ko_multi(m.group(1))} 커뮤니티 데이"),
+            (r"^(.+?) Spotlight Hour$", lambda m: f"{_ko_multi(m.group(1))} 스포트라이트 아워"),
+            (r"^Mega (.+?) (?:in )?Mega Raids?$", lambda m: f"메가 레이드: 메가 {_ko1(m.group(1))}"),
+            (r"^(.+?) in Mega Raids?$", lambda m: f"메가 레이드: {_ko_multi(m.group(1))}"),
+            (r"^Shadow (.+?) (?:in )?Shadow Raids?$", lambda m: f"그림자 레이드: 그림자 {_ko1(m.group(1))}"),
+            (r"^(.+?) in Shadow Raids?$", lambda m: f"그림자 레이드: {_ko_multi(m.group(1))}"),
+            (r"^(.+?) in (\d+)-star Raid Battles?$", lambda m: f"{m.group(2)}성 레이드: {_ko_multi(m.group(1))}"),
+            (r"^(.+?) in Raid Battles?$", lambda m: f"레이드: {_ko_multi(m.group(1))}"),
+            (r"^(.+?) Super Mega Raid Day$", lambda m: f"{_ko_multi(m.group(1))} 슈퍼 메가 레이드 데이"),
+            (r"^(.+?) Raid Day$", lambda m: f"{_ko_multi(m.group(1))} 레이드 데이"),
+            (r"^(.+?) Raid Hour$", lambda m: f"{_ko_multi(m.group(1))} 레이드 아워"),
+            (r"^(.+?) Raid Weekend$", lambda m: f"{_ko_multi(m.group(1))} 레이드 주말"),
+            (r"^Gigantamax (.+?) during Max Monday$", lambda m: f"맥스 먼데이: 거다이맥스 {_ko1(m.group(1))}"),
+            (r"^Dynamax (.+?) during Max Monday$", lambda m: f"맥스 먼데이: 다이맥스 {_ko1(m.group(1))}"),
+            (r"^Gigantamax (.+)$", lambda m: f"거다이맥스 {_ko_multi(m.group(1))}"),
+            (r"^Dynamax (.+)$", lambda m: f"다이맥스 {_ko_multi(m.group(1))}"),
+            (r"^Choose Your Path: (.+)$", lambda m: f"갈림길: {m.group(1)}"),
+        ]
+        for pat, fn in rules:
+            mm = re.match(pat, s)
+            if mm:
+                try:
+                    return fn(mm)
+                except Exception:
+                    break
+
+        # GBL 리그 로테이션 등 — 패턴 미매칭 시 리그/시즌 키워드만 부분 치환.
+        # (컵 고유명은 영문 유지) 길이 긴 항목부터 치환해야 중복 매칭을 피한다.
+        if "League" in s or "Forever Forward" in s:
+            out = s
+            for en, ko in (
+                ("Master League: Mega Edition", "마스터 리그: 메가 버전"),
+                ("Great League Edition", "그레이트 리그 버전"),
+                ("Ultra League Edition", "울트라 리그 버전"),
+                ("Master League", "마스터 리그"),
+                ("Great League", "그레이트 리그"),
+                ("Ultra League", "울트라 리그"),
+                ("Master Premier", "마스터 프리미어"),
+                ("Mega Edition", "메가 버전"),
+                ("Forever Forward", "영원한 전진"),
+            ):
+                out = out.replace(en, ko)
+            out = out.replace(", and ", " · ").replace(" and ", " · ").replace(", ", " · ")
+            return out
+        return name
+
     _sort_state = {}  # tree id → (col, descending)
 
     def _sort_tree(tree, col):
@@ -4622,6 +4683,9 @@ def run_gui(gm):
 
     EVENT_TYPE_KO = {
         "community-day": "커뮤니티 데이",
+        "choose-your-path": "갈림길",
+        "max-mondays": "맥스 먼데이",
+        "max-monday": "맥스 먼데이",
         "raid-battles": "레이드",
         "raid-hour": "레이드 아워",
         "raid-day": "레이드 데이",
@@ -4689,7 +4753,7 @@ def run_gui(gm):
                            values=(_format_iso_short(ev.get("start")),
                                    _format_iso_short(ev.get("end")),
                                    type_ko,
-                                   ev.get("name", "")),
+                                   _translate_event_name(ev.get("name", ""))),
                            tags=(status,),
                            text=ev.get("eventID", ""))
 
@@ -5909,13 +5973,13 @@ def run_gui(gm):
         if not active:
             line("진행 중인 이벤트 없음", "#999")
         for _s, _e, ev in active[:15]:
-            line(f"• {ev.get('name','')}  —  ~{_format_iso_short(ev.get('end'))} 종료", "#2a7a3a")
+            line(f"• {_translate_event_name(ev.get('name',''))}  —  ~{_format_iso_short(ev.get('end'))} 종료", "#2a7a3a")
 
         section(f"🔜 곧 시작 (이번 달, {len(soon)})")
         if not soon:
             line("예정 이벤트 없음", "#999")
         for _s, _e, ev in soon[:15]:
-            line(f"• {ev.get('name','')}  —  {_format_iso_short(ev.get('start'))} 시작", "#a06020")
+            line(f"• {_translate_event_name(ev.get('name',''))}  —  {_format_iso_short(ev.get('start'))} 시작", "#a06020")
 
         # ── 주목 레이드 (5★ / 메가 / 엘리트) ──
         bosses = raid_state.get("bosses", []) or []
