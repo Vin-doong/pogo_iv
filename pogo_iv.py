@@ -19,7 +19,7 @@ import threading
 import time
 import urllib.request
 from collections import namedtuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 if sys.platform == "win32":
     try:
@@ -295,43 +295,42 @@ FORM_KO = {
 # 강화 비용: idx (= (level-1)*2) → (별의모래, 사탕, XL사탕) per power-up (+0.5 level)
 # idx 0 = L1.0→1.5, idx 78 = L40.0→40.5, ...
 # Pokémon GO 공식 비용표 (2024 기준)
+# 공식 강화 비용 (별의모래, 사탕, XL의 사탕) — 각 칸 = +0.5 레벨 1 step.
+# idx i = CPM 레벨 idx i → i+1 로 올릴 때 비용. idx 0 = Lv1.0→1.5, idx 97 = Lv49.5→50.0.
+# 출처: Bulbapedia / Pokémon GO Wiki (Lv40→50 합계 별의모래 250,000·XL 296 으로 검증).
+# Lv40 부터는 일반 사탕 0 + XL의 사탕 사용. Lv50→51 은 베스트 친구 보너스(무료)라 표에 없음.
 POWER_UP_COST = [
-    # L1→10: 200 dust, 1 candy (idx 0~17, 18칸)
-    *([(200, 1, 0)] * 18),
-    # L10→15: 400 dust, 1 candy (idx 18~27, 10칸)
-    *([(400, 1, 0)] * 10),
-    # L15→20: 600 dust, 1 candy (idx 28~37)
-    *([(600, 1, 0)] * 10),
-    # L20→25: 1300 dust, 2 candy (idx 38~47)
-    *([(1300, 2, 0)] * 10),
-    # L25→30: 2000 dust, 3 candy (idx 48~57)
-    *([(2000, 3, 0)] * 10),
-    # L30→35: 2500 dust, 4 candy (idx 58~67)
-    *([(2500, 4, 0)] * 10),
-    # L35→40: 3000 dust, 6 candy (idx 68~77)
-    *([(3000, 6, 0)] * 10),
-    # L40→41: 5000, 10, 10  (idx 78~79)
-    (5000, 10, 10), (5000, 10, 10),
-    # L41→42: 6500, 10, 10  (idx 80~81)
-    (6500, 10, 10), (6500, 10, 10),
-    # L42→43: 8000, 12, 12
-    (8000, 12, 12), (8000, 12, 12),
-    # L43→44: 9500, 15, 15
-    (9500, 15, 15), (9500, 15, 15),
-    # L44→45: 11000, 15, 15
-    (11000, 15, 15), (11000, 15, 15),
-    # L45→46: 12500, 17, 17
-    (12500, 17, 17), (12500, 17, 17),
-    # L46→47: 14000, 17, 17
-    (14000, 17, 17), (14000, 17, 17),
-    # L47→48: 15500, 20, 20
-    (15500, 20, 20), (15500, 20, 20),
-    # L48→49: 17000, 20, 20
-    (17000, 20, 20), (17000, 20, 20),
-    # L49→50: 18500, 25, 25
-    (18500, 25, 25), (18500, 25, 25),
-    # L50→51 (보통 도달 불가, 안전망)
-    (20000, 25, 25), (20000, 25, 25),
+    *([(200, 1, 0)] * 4),    # Lv1.0~2.5
+    *([(400, 1, 0)] * 4),    # Lv3.0~4.5
+    *([(600, 1, 0)] * 4),    # Lv5.0~6.5
+    *([(800, 1, 0)] * 4),    # Lv7.0~8.5
+    *([(1000, 1, 0)] * 4),   # Lv9.0~10.5
+    *([(1300, 2, 0)] * 4),   # Lv11.0~12.5
+    *([(1600, 2, 0)] * 4),   # Lv13.0~14.5
+    *([(1900, 2, 0)] * 4),   # Lv15.0~16.5
+    *([(2200, 2, 0)] * 4),   # Lv17.0~18.5
+    *([(2500, 2, 0)] * 4),   # Lv19.0~20.5
+    *([(3000, 3, 0)] * 4),   # Lv21.0~22.5
+    *([(3500, 3, 0)] * 4),   # Lv23.0~24.5
+    *([(4000, 3, 0)] * 2),   # Lv25.0~25.5
+    *([(4000, 4, 0)] * 2),   # Lv26.0~26.5
+    *([(4500, 4, 0)] * 4),   # Lv27.0~28.5
+    *([(5000, 4, 0)] * 4),   # Lv29.0~30.5
+    *([(6000, 6, 0)] * 4),   # Lv31.0~32.5
+    *([(7000, 8, 0)] * 4),   # Lv33.0~34.5
+    *([(8000, 10, 0)] * 4),  # Lv35.0~36.5
+    *([(9000, 12, 0)] * 4),  # Lv37.0~38.5
+    *([(10000, 15, 0)] * 2),  # Lv39.0~39.5
+    *([(10000, 0, 10)] * 2),  # Lv40.0~40.5
+    *([(11000, 0, 10)] * 2),  # Lv41.0~41.5
+    *([(11000, 0, 12)] * 2),  # Lv42.0~42.5
+    *([(12000, 0, 12)] * 2),  # Lv43.0~43.5
+    *([(12000, 0, 15)] * 2),  # Lv44.0~44.5
+    *([(13000, 0, 15)] * 2),  # Lv45.0~45.5
+    *([(13000, 0, 17)] * 2),  # Lv46.0~46.5
+    *([(14000, 0, 17)] * 2),  # Lv47.0~47.5
+    *([(14000, 0, 20)] * 2),  # Lv48.0~48.5
+    *([(15000, 0, 20)] * 2),  # Lv49.0~49.5
 ]
 
 # PoGO 타입 상성 배수 (메인 시리즈와 다름)
@@ -2458,7 +2457,7 @@ def run_cli(args, gm):
 
 def run_gui(gm):
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import ttk, messagebox, filedialog
 
     # ----- mutable bindings (refresh-에서 재할당 가능하도록 list로 wrapping) -----
     state = {"gm": gm}
@@ -2703,7 +2702,7 @@ def run_gui(gm):
         _ranking_lru.clear()
         _ranking_lru_order.clear()
         ranking_cache.clear()
-        for _fn in (refresh, refresh_reverse):
+        for _fn in (refresh,):
             try:
                 _fn()
             except Exception as e:
@@ -2750,6 +2749,61 @@ def run_gui(gm):
     data_refresh_btn = ttk.Button(left, text="데이터 업데이트",
                                   command=lambda: do_data_refresh())
     data_refresh_btn.pack(fill="x", pady=(4, 0))
+
+    # ----- 즐겨찾기 백업 (내보내기 / 가져오기) -----
+    def _export_favorites():
+        if not favorites:
+            messagebox.showinfo("내보내기", "즐겨찾기가 비어 있습니다.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="즐겨찾기 내보내기", defaultextension=".json",
+            initialfile="pogo_favorites.json",
+            filetypes=[("JSON", "*.json")])
+        if not path:
+            return
+        try:
+            _atomic_write_json(path, {"species": sorted(favorites)})
+            messagebox.showinfo("내보내기", f"{len(favorites)}개 즐겨찾기를 저장했습니다.\n{path}")
+        except Exception as e:
+            messagebox.showerror("내보내기 실패", str(e))
+
+    def _import_favorites():
+        path = filedialog.askopenfilename(
+            title="즐겨찾기 가져오기",
+            filetypes=[("JSON", "*.json"), ("모든 파일", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                incoming = set(json.load(f).get("species", []))
+        except Exception as e:
+            messagebox.showerror("가져오기 실패", f"파일을 읽을 수 없습니다: {e}")
+            return
+        if not incoming:
+            messagebox.showinfo("가져오기", "파일에 즐겨찾기가 없습니다.")
+            return
+        merge = messagebox.askyesnocancel(
+            "가져오기",
+            f"{len(incoming)}개를 불러왔습니다.\n\n"
+            f"[예] 기존 {len(favorites)}개에 합치기\n"
+            f"[아니오] 기존을 덮어쓰기\n"
+            f"[취소] 취소")
+        if merge is None:
+            return
+        if not merge:
+            favorites.clear()
+        favorites.update(incoming)
+        save_favorites(favorites)
+        fav_count_var.set(f"★ 즐겨찾기만 보기  ({len(favorites)}개)")
+        update_listbox(force=True, auto_select=False)
+        messagebox.showinfo("가져오기", f"완료 — 현재 즐겨찾기 {len(favorites)}개")
+
+    bk_row = ttk.Frame(left)
+    bk_row.pack(fill="x", pady=(2, 0))
+    ttk.Button(bk_row, text="즐겨찾기 내보내기", command=_export_favorites
+               ).pack(side="left", fill="x", expand=True, padx=(0, 2))
+    ttk.Button(bk_row, text="가져오기", command=_import_favorites
+               ).pack(side="left", fill="x", expand=True, padx=(2, 0))
 
     # ===== Right: league + results =====
     right = ttk.Frame(root, padding=(6, 12, 12, 12))
@@ -3330,14 +3384,48 @@ def run_gui(gm):
 
     refresh_compare()  # 초기 placeholder 렌더
 
-    # --- Tab 3: 리그 메타 랭킹 ---
+    # --- Tab 3: 리그 메타 랭킹 (개별 메타 + 팀 메타 토글) ---
     meta_tab = ttk.Frame(notebook, padding=(6, 8))
     notebook.add(meta_tab, text="  PvP 메타  ")
 
     meta_label = tk.StringVar(value="")
     ttk.Label(meta_tab, textvariable=meta_label, font=("", 10)).pack(anchor="w", pady=(0, 4))
 
-    meta_search_row = ttk.Frame(meta_tab)
+    # 개별 메타 / 팀 메타 전환 토글 — 한 탭에서 라디오로 뷰 교체
+    meta_mode_var = tk.StringVar(value="individual")
+
+    def _refresh_meta_active():
+        """현재 활성 모드만 갱신 (탭 진입 시 호출)."""
+        if meta_mode_var.get() == "team":
+            _refresh_team_meta()
+        else:
+            refresh_meta()
+
+    def _on_meta_mode():
+        if meta_mode_var.get() == "team":
+            meta_indiv_container.pack_forget()
+            meta_team_container.pack(fill="both", expand=True)
+            _refresh_team_meta()
+        else:
+            meta_team_container.pack_forget()
+            meta_indiv_container.pack(fill="both", expand=True)
+            refresh_meta(force=True)
+
+    meta_mode_row = ttk.Frame(meta_tab)
+    meta_mode_row.pack(fill="x", pady=(0, 6))
+    ttk.Radiobutton(meta_mode_row, text="개별 메타", value="individual",
+                    variable=meta_mode_var, command=_on_meta_mode).pack(side="left")
+    ttk.Radiobutton(meta_mode_row, text="팀 메타", value="team",
+                    variable=meta_mode_var, command=_on_meta_mode).pack(side="left", padx=(12, 0))
+    ttk.Label(meta_mode_row, text="  · 개별=강한 포켓몬 순위, 팀=추천 조합",
+              font=("", 8), foreground="#888").pack(side="left", padx=(8, 0))
+
+    # 두 뷰 컨테이너 (pack/pack_forget 로 전환)
+    meta_indiv_container = ttk.Frame(meta_tab)
+    meta_team_container = ttk.Frame(meta_tab)
+    meta_indiv_container.pack(fill="both", expand=True)
+
+    meta_search_row = ttk.Frame(meta_indiv_container)
     meta_search_row.pack(fill="x", pady=(0, 4))
     ttk.Label(meta_search_row, text="검색", font=("", 9)).pack(side="left", padx=(0, 4))
     meta_search_var = tk.StringVar(value="")
@@ -3350,7 +3438,7 @@ def run_gui(gm):
               text="한글/영문 sid 부분 일치 · 행 더블클릭 → 좌측 리스트 선택",
               font=("", 8), foreground="#777").pack(side="left")
 
-    meta_frame = ttk.Frame(meta_tab)
+    meta_frame = ttk.Frame(meta_indiv_container)
     meta_frame.pack(fill="both", expand=True)
     meta_scroll = ttk.Scrollbar(meta_frame, orient="vertical")
     meta_scroll.pack(side="right", fill="y")
@@ -3366,105 +3454,6 @@ def run_gui(gm):
         meta_tree.column(c, width=w, anchor=a)
     meta_tree.pack(side="left", fill="both", expand=True)
     meta_scroll.config(command=meta_tree.yview)
-
-    # --- Tab 3: 내 IV로 포켓몬 찾기 (역검색) ---
-    rev_tab = ttk.Frame(notebook, padding=(6, 8))
-    notebook.add(rev_tab, text="  PvP IV검색  ")
-
-    rev_top = ttk.Frame(rev_tab)
-    rev_top.pack(fill="x", pady=(0, 8))
-    ttk.Label(rev_top, text="개체값 입력 → 4리그별 그 IV가 잘 어울리는 포켓몬",
-              font=("", 10, "bold")).pack(side="left")
-
-    rev_input = ttk.Frame(rev_tab)
-    rev_input.pack(fill="x", pady=(0, 8))
-    ttk.Label(rev_input, text="공").pack(side="left", padx=(0, 2))
-    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=atk_var, width=4).pack(side="left")
-    ttk.Label(rev_input, text="방").pack(side="left", padx=(10, 2))
-    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=def_var, width=4).pack(side="left")
-    ttk.Label(rev_input, text="체").pack(side="left", padx=(10, 2))
-    ttk.Spinbox(rev_input, from_=0, to=15, textvariable=hp_var, width=4).pack(side="left")
-    ttk.Label(rev_input, text="(Tab 1 과 공유)",
-              foreground="#888", font=("", 8)).pack(side="left", padx=(8, 0))
-    ttk.Label(rev_input, text="  ·  메타 상위").pack(side="left", padx=(20, 2))
-    rev_topn_var = tk.IntVar(value=200)
-    ttk.Spinbox(rev_input, from_=50, to=500, increment=50,
-                textvariable=rev_topn_var, width=5).pack(side="left")
-    ttk.Label(rev_input, text="종 중에서").pack(side="left", padx=(2, 0))
-    ttk.Button(rev_input, text="찾기",
-               command=lambda: refresh_reverse()).pack(side="left", padx=(20, 0))
-
-    ttk.Label(rev_tab,
-              text="점수 = PvPoke 메타점수 × (내 IV의 이 포켓몬 베스트 대비%) ÷ 100   "
-                   "행 더블클릭 → 좌측 리스트에 선택",
-              font=("", 8), foreground="#777").pack(anchor="w", pady=(0, 6))
-
-    rev_split = ttk.Frame(rev_tab)
-    rev_split.pack(fill="both", expand=True)
-
-    # 역검색 탭은 빌트인 4개 오픈 리그만 표시 (시즌 컵까지 나란히 두면 너무 좁음)
-    rev_trees = {}
-    for lg in _BUILTIN_LEAGUES:
-        lname = lg.name
-        col = ttk.Frame(rev_split)
-        col.pack(side="left", fill="both", expand=True, padx=2)
-        ttk.Label(col, text=lname, font=("", 9, "bold")).pack(anchor="w")
-        rev_cols = ("rank", "name", "pct", "score")
-        rev_labels = ["#", "포켓몬", "베스트%", "점수"]
-        rev_widths = [25, 130, 55, 50]
-        rev_anchors = ["e", "w", "e", "e"]
-        sb = ttk.Scrollbar(col, orient="vertical")
-        sb.pack(side="right", fill="y")
-        rt = ttk.Treeview(col, columns=rev_cols, show="headings",
-                          yscrollcommand=sb.set, height=25, selectmode="browse")
-        for c, l, w, a in zip(rev_cols, rev_labels, rev_widths, rev_anchors):
-            rt.heading(c, text=l)
-            rt.column(c, width=w, anchor=a)
-        rt.pack(side="left", fill="both", expand=True)
-        sb.config(command=rt.yview)
-        rev_trees[lname] = rt
-
-    # --- Tab 4: CP → IV 추정 ---
-    cp_tab = ttk.Frame(notebook, padding=(6, 8))
-    notebook.add(cp_tab, text="  PvP CP→IV  ")
-
-    ttk.Label(cp_tab,
-              text="좌측에서 포켓몬 선택 후, 게임에서 보이는 CP/HP/(레벨)을 입력 → 가능한 IV 후보",
-              font=("", 10, "bold")).pack(anchor="w", pady=(0, 6))
-
-    cp_input = ttk.Frame(cp_tab)
-    cp_input.pack(fill="x", pady=(0, 6))
-    ttk.Label(cp_input, text="CP").pack(side="left", padx=(0, 2))
-    cp_var = tk.StringVar(value="")
-    ttk.Entry(cp_input, textvariable=cp_var, width=8).pack(side="left")
-    ttk.Label(cp_input, text="HP").pack(side="left", padx=(12, 2))
-    chp_var = tk.StringVar(value="")
-    ttk.Entry(cp_input, textvariable=chp_var, width=6).pack(side="left")
-    ttk.Label(cp_input, text="Lv (모르면 비워두기)").pack(side="left", padx=(12, 2))
-    clv_var = tk.StringVar(value="")
-    ttk.Spinbox(cp_input, from_=1.0, to=51.0, increment=0.5,
-                textvariable=clv_var, width=6).pack(side="left")
-    ttk.Button(cp_input, text="추정",
-               command=lambda: refresh_cp_iv()).pack(side="left", padx=(20, 0))
-
-    cp_status_var = tk.StringVar(value="")
-    ttk.Label(cp_tab, textvariable=cp_status_var, font=("", 9),
-              foreground="#666").pack(anchor="w", pady=(0, 4))
-
-    cp_frame = ttk.Frame(cp_tab)
-    cp_frame.pack(fill="both", expand=True)
-    cp_scroll = ttk.Scrollbar(cp_frame, orient="vertical")
-    cp_scroll.pack(side="right", fill="y")
-    cp_cols = ("lvl", "iv", "total", "hp_calc", "cp_calc")
-    cp_col_labels = ["레벨", "공/방/체", "합계 (%)", "HP", "CP"]
-    cp_widths = [80, 110, 100, 60, 60]
-    cp_tree = ttk.Treeview(cp_frame, columns=cp_cols, show="headings",
-                           yscrollcommand=cp_scroll.set, height=24)
-    for c, l, w in zip(cp_cols, cp_col_labels, cp_widths):
-        cp_tree.heading(c, text=l)
-        cp_tree.column(c, width=w, anchor="center")
-    cp_tree.pack(side="left", fill="both", expand=True)
-    cp_scroll.config(command=cp_tree.yview)
 
     # --- Tab 5: 타입 상성표 ---
     type_tab = ttk.Frame(notebook, padding=(8, 8))
@@ -3836,152 +3825,6 @@ def run_gui(gm):
             w.bind("<<ComboboxSelected>>", lambda e: refresh_counters())
     _populate_boss_combo()
 
-    # --- Tab 7: PvE DPS — 선택 포켓몬의 모든 무브셋 DPS 정렬 ---
-    dps_tab = ttk.Frame(notebook, padding=(8, 8))
-    notebook.add(dps_tab, text="  PvE DPS  ")
-
-    dps_top = ttk.Frame(dps_tab)
-    dps_top.pack(fill="x", pady=(0, 6))
-    dps_pokemon_var = tk.StringVar(value="좌측에서 포켓몬 선택")
-    ttk.Label(dps_top, textvariable=dps_pokemon_var,
-              font=("", 11, "bold")).pack(side="left")
-
-    ttk.Label(dps_top, text="  타겟 방어 타입:", font=("", 9)).pack(side="left", padx=(20, 4))
-    dps_target_var = tk.StringVar(value="(중립)")
-    target_choices = ["(중립)"] + [TYPE_KO[t] for t in TYPES_ORDER]
-    make_searchable_combo(dps_top, dps_target_var, target_choices,
-                          on_select=lambda: refresh_pve_dps(),
-                          width=10).pack(side="left")
-
-    ttk.Label(dps_top, text="  날씨:", font=("", 9)).pack(side="left", padx=(12, 4))
-    dps_weather_var = tk.StringVar(value="(없음)")
-    make_searchable_combo(dps_top, dps_weather_var, weather_choices,
-                          on_select=lambda: refresh_pve_dps(),
-                          width=12).pack(side="left")
-
-    ttk.Label(dps_top, text="  Lv:", font=("", 9)).pack(side="left", padx=(12, 4))
-    dps_lv_var = tk.StringVar(value="50")
-    dps_lv_combo = ttk.Combobox(dps_top, textvariable=dps_lv_var,
-                                values=["40", "45", "50", "51"], width=5, state="readonly")
-    dps_lv_combo.pack(side="left")
-
-    dps_status_var = tk.StringVar(
-        value="• 좌측 포켓몬 선택 시 자동 갱신 · Lv50/15·15·15 가정")
-    ttk.Label(dps_tab, textvariable=dps_status_var,
-              font=("", 8), foreground="#666").pack(anchor="w", pady=(0, 4))
-    ttk.Label(dps_tab,
-              text="⚠ DPS 절대값은 PvP 소스(pvpoke) 기반이라 PvE 실측보다 보수적 — "
-                   "무브셋 간 상대 순위는 정확함.",
-              font=("", 8), foreground="#a06030"
-              ).pack(anchor="w", pady=(0, 2))
-
-    dps_table_frame = ttk.Frame(dps_tab)
-    dps_table_frame.pack(fill="both", expand=True)
-    dps_scroll = ttk.Scrollbar(dps_table_frame, orient="vertical")
-    dps_scroll.pack(side="right", fill="y")
-    dps_cols = ("rank", "fast", "charged", "fast_dmg", "ch_dmg", "edps", "dps", "tdo")
-    dps_labels = ["#", "속공", "차지", "속공 데미지", "차지 데미지", "eDPS", "DPS", "TDO"]
-    dps_widths = [40, 200, 220, 90, 90, 70, 70, 80]
-    dps_tree = ttk.Treeview(dps_table_frame, columns=dps_cols, show="headings",
-                            yscrollcommand=dps_scroll.set, height=22)
-    for c, l, w in zip(dps_cols, dps_labels, dps_widths):
-        dps_tree.heading(c, text=l)
-        dps_tree.column(c, width=w, anchor="w" if c in ("fast", "charged") else "center")
-    dps_tree.pack(side="left", fill="both", expand=True)
-    dps_scroll.config(command=dps_tree.yview)
-
-    def _selected_attacker():
-        sel = listbox.curselection()
-        if not sel:
-            return None
-        disp = strip_star(listbox.get(sel[0]))
-        sid = display_to_sid.get(disp)
-        if not sid:
-            return None
-        return sid_to_pokemon.get(sid)
-
-    def _dps_target_types():
-        """타겟 방어 타입을 list 로. (중립) → []"""
-        v = dps_target_var.get()
-        for code, ko in TYPE_KO.items():
-            if ko == v:
-                return [code]
-        return []
-
-    def _dps_weather_key():
-        v = dps_weather_var.get()
-        for k, ko in WEATHER_KO.items():
-            if ko == v:
-                return k if k != "none" else None
-        return None
-
-    def refresh_pve_dps():
-        for r in dps_tree.get_children():
-            dps_tree.delete(r)
-        atk = _selected_attacker()
-        if not atk:
-            dps_pokemon_var.set("좌측에서 포켓몬 선택")
-            dps_status_var.set("• 좌측 포켓몬 선택 시 자동 갱신")
-            return
-        sid = atk.get("speciesId", "")
-        ko = sid_to_display.get(sid, sid)
-        types = " · ".join(TYPE_KO.get(t, t) for t in atk.get("types", [])
-                           if t and t != "none")
-        dps_pokemon_var.set(f"{ko}  ({types})")
-
-        target_types = _dps_target_types()
-        target_str = TYPE_KO.get(target_types[0], target_types[0]) if target_types else "중립"
-        weather = _dps_weather_key()
-
-        # 모든 (속공 × 차지) 조합 → DPS 리스트
-        fasts = (atk.get("fastMoves") or []) + (atk.get("eliteMoves") or [])
-        chargeds = (atk.get("chargedMoves") or []) + (atk.get("eliteMoves") or [])
-        rows = []
-        elite_set = set(atk.get("eliteMoves") or [])
-        for fid in fasts:
-            f = moves_by_id.get(fid)
-            if not f or f.get("energyGain", 0) <= 0:
-                continue
-            for cid in chargeds:
-                c = moves_by_id.get(cid)
-                if not c or c.get("energy", 0) <= 0:
-                    continue
-                try:
-                    lv = float(dps_lv_var.get())
-                except ValueError:
-                    lv = 50.0
-                # 보스 가정: 5성급 보스 (cpm 0.5793, base def 180)
-                r = attacker_dps_vs(atk, f, c, target_types,
-                                    boss_cpm=0.5793, boss_base_def=180,
-                                    weather=weather, attacker_level=lv)
-                rows.append({**r, "fid": fid, "cid": cid})
-        rows.sort(key=lambda x: x["edps"], reverse=True)
-
-        for i, r in enumerate(rows, 1):
-            f = moves_by_id[r["fid"]]
-            c = moves_by_id[r["cid"]]
-            f_lbl = f"{move_ko(r['fid'])} ({TYPE_KO.get(f['type'], f['type'])})"
-            c_lbl = f"{move_ko(r['cid'])} ({TYPE_KO.get(c['type'], c['type'])})"
-            elite_mark = ""
-            if r['fid'] in elite_set: f_lbl = "★ " + f_lbl
-            if r['cid'] in elite_set: c_lbl = "★ " + c_lbl
-            dps_tree.insert("", "end", values=(
-                i, f_lbl, c_lbl,
-                f"{r['fast_dmg']:.0f}",
-                f"{r['charged_dmg']:.0f}",
-                f"{r['edps']:.1f}",
-                f"{r['dps']:.1f}",
-                f"{r['tdo']:.0f}",
-            ))
-        dps_status_var.set(
-            f"• {len(rows)}개 무브셋 · 타겟={target_str} · 날씨={dps_weather_var.get()} · "
-            f"Lv{dps_lv_var.get()}/15·15·15 가정 · ★ = 엘리트/레거시 무브"
-        )
-
-    ttk.Combobox  # (placeholder for next bind block)
-    # dps_target / dps_weather 콤보는 make_searchable_combo 가 이미 바인딩
-    dps_lv_combo.bind("<<ComboboxSelected>>", lambda e: refresh_pve_dps())
-
     # --- Tab: PvE 로켓 — 로켓단 조무래기 카운터 ---
     rkt_tab = ttk.Frame(notebook, padding=(8, 8))
     notebook.add(rkt_tab, text="  PvE 로켓  ")
@@ -4313,9 +4156,7 @@ def run_gui(gm):
         # 실패는 콘솔에 로깅(조용히 삼키면 어느 탭이 깨졌는지 진단 불가).
         for _name, _fn in (("PvP 메타", lambda: refresh_meta(force=True)),
                            ("PvP 비교", refresh_compare),
-                           ("역검색", refresh_reverse),
                            ("레이드 카운터", refresh_counters),
-                           ("PvE DPS", refresh_pve_dps),
                            ("로켓", refresh_rocket),
                            ("팀 메타", lambda: _refresh_team_meta(force=False))):
             try:
@@ -4396,10 +4237,10 @@ def run_gui(gm):
             _ranking_lru.pop(old, None)
         return data
 
-    # ===== Tab: PvP 팀 메타 (PvPoke training/teams 데이터) =====
-    # notebook.add 로 끝에 추가 후, 아래에서 notebook.insert 로 PvP 그룹으로 이동
-    team_meta_tab = ttk.Frame(notebook, padding=(8, 8))
-    notebook.add(team_meta_tab, text="  PvP 팀 메타  ")
+    # ===== PvP 팀 메타 (PvPoke training/teams 데이터) — 'PvP 메타' 탭의 '팀 메타' 모드 =====
+    # 별도 탭이 아니라 meta_team_container 안에 배치 (라디오 토글로 전환)
+    team_meta_tab = ttk.Frame(meta_team_container, padding=(0, 0))
+    team_meta_tab.pack(fill="both", expand=True)
 
     ttk.Label(team_meta_tab,
               text="PvPoke 메타 팀 — 8개 역할 슬롯과 각 역할의 추천 포켓몬·무브셋. "
@@ -5720,8 +5561,12 @@ def run_gui(gm):
             if target_idx <= cur_idx:
                 return "강화 불필요 ✓"
             d, c, x = power_up_cost(cur_idx, target_idx)
-            xl_str = f" · XL의사탕 {x}" if x else ""
-            return f"별의모래 {d:,} · 사탕 {c}{xl_str}"
+            parts = [f"별의모래 {d:,}"]
+            if c:
+                parts.append(f"사탕 {c}")
+            if x:
+                parts.append(f"XL의 사탕 {x}")
+            return " · ".join(parts)
 
         for lg in LEAGUES:
             lname = lg.name
@@ -5827,146 +5672,6 @@ def run_gui(gm):
             tree.see(user_item_id)
             tree.selection_set(user_item_id)
 
-    # ----- IV 역검색 -----
-    def refresh_reverse():
-        def _iv(sv):
-            s = sv.get().strip()
-            try:
-                v = int(s)
-                return v if 0 <= v <= 15 else None
-            except (ValueError, AttributeError):
-                return None
-        a, d, h = _iv(atk_var), _iv(def_var), _iv(hp_var)
-        if a is None or d is None or h is None:
-            for tr in rev_trees.values():
-                for r in tr.get_children():
-                    tr.delete(r)
-            return
-        user_iv = (a, d, h)
-        topn = max(50, min(500, rev_topn_var.get() or 200))
-        max_idx = current_max_idx()
-        gm_pokemon = state["gm"]["pokemon"]
-        by_sid = {p["speciesId"]: p for p in gm_pokemon}
-
-        for lg in _BUILTIN_LEAGUES:
-            lname = lg.name
-            cap = lg.cap
-            tr = rev_trees[lname]
-            for r in tr.get_children():
-                tr.delete(r)
-            league_rk = rankings.get(lname, [])[:topn]
-            results = []
-            for entry in league_rk:
-                sid = entry.get("speciesId")
-                p = by_sid.get(sid)
-                if not p:
-                    continue
-                base = p["baseStats"]
-                # 사용자 IV의 SP
-                blu = best_level_under_cap(base, user_iv, cap, max_idx)
-                if blu is None:
-                    continue
-                _, cpm_u, _ = blu
-                user_sp = stat_product(base, user_iv, cpm_u)
-                # 이 포켓몬 최고 SP (15/15/15가 마스터에서 최적, 다른 리그도 사실상 최적 근사)
-                # 정확한 top SP 는 PvPoke의 stats.product * 1000 사용
-                top_sp_pvpoke = entry.get("stats", {}).get("product", 0) * 1000
-                if top_sp_pvpoke <= 0:
-                    continue
-                pct = min(100.0, user_sp / top_sp_pvpoke * 100)
-                meta_score = entry.get("score", 0)
-                combined = meta_score * pct / 100
-                results.append((combined, pct, meta_score, sid, entry.get("speciesName", sid)))
-            results.sort(key=lambda r: -r[0])
-            for i, (combined, pct, meta, sid, name) in enumerate(results[:50], 1):
-                disp = sid_to_display.get(sid, name)
-                tag = "top3" if i <= 3 else ""
-                tr.insert("", "end", values=(
-                    i, disp, f"{pct:.1f}", f"{combined:.1f}",
-                ), tags=(sid, tag))
-            tr.tag_configure("top3", background="#fff9dd")
-
-    def on_rev_double(event, lname):
-        tr = rev_trees[lname]
-        sel = tr.selection()
-        if not sel:
-            return
-        tags = tr.item(sel[0], "tags")
-        if not tags:
-            return
-        sid = tags[0]
-        disp = sid_to_display.get(sid)
-        if disp:
-            select_pokemon_by_display(disp)
-            notebook.select(iv_tab)
-
-    for _lname in rev_trees:
-        rev_trees[_lname].bind(
-            "<Double-Button-1>",
-            lambda e, n=_lname: on_rev_double(e, n)
-        )
-
-    # ----- CP → IV 추정 -----
-    def refresh_cp_iv():
-        for r in cp_tree.get_children():
-            cp_tree.delete(r)
-        sel = listbox.curselection()
-        if not sel:
-            cp_status_var.set("좌측에서 포켓몬을 먼저 선택하세요.")
-            return
-        disp = strip_star(listbox.get(sel[0]))
-        sid = display_to_sid.get(disp)
-        pokemon = sid_to_pokemon.get(sid)
-        if not pokemon:
-            cp_status_var.set("포켓몬 정보를 찾을 수 없음.")
-            return
-        try:
-            cp_in = int(cp_var.get().strip())
-            hp_in = int(chp_var.get().strip())
-        except (ValueError, AttributeError):
-            cp_status_var.set("CP, HP 둘 다 정수로 입력하세요.")
-            return
-        lv_s = clv_var.get().strip()
-        level_range = None
-        if lv_s:
-            try:
-                lv = float(lv_s)
-            except ValueError:
-                cp_status_var.set("Lv 형식 오류 — 비워두면 전체 레벨 검색.")
-                return
-            if not (1.0 <= lv <= 51.0):
-                cp_status_var.set("Lv 은 1~51 범위로 입력하세요 (비워두면 전체 레벨 검색).")
-                return
-            idx = idx_from_level(lv)
-            level_range = (idx, idx)
-        base = pokemon["baseStats"]
-        cands = find_iv_candidates(base, cp_in, hp_in, level_range=level_range)
-        if not cands:
-            cp_status_var.set(
-                f"매칭되는 IV 없음. CP/HP 값을 다시 확인하세요 "
-                f"(현재 입력: CP {cp_in}, HP {hp_in})"
-            )
-            return
-        cp_status_var.set(
-            f"{disp}  →  매칭 후보 {len(cands)}건  "
-            f"(합계% = (공+방+체)/45 * 100, 100% = 15/15/15)"
-        )
-        # group by level
-        for idx, iv in cands:
-            lvl = level_from_idx(idx)
-            cpm = CPM[idx]
-            hp_calc = int((base["hp"] + iv[2]) * cpm)
-            cp_calc = compute_cp(base, iv, cpm)
-            total = (iv[0] + iv[1] + iv[2]) / 45 * 100
-            tag = "perfect" if iv == (15, 15, 15) else ""
-            cp_tree.insert("", "end", values=(
-                f"Lv{lvl:g}",
-                f"{iv[0]} / {iv[1]} / {iv[2]}",
-                f"{iv[0]+iv[1]+iv[2]} ({total:.0f}%)",
-                hp_calc, cp_calc,
-            ), tags=(tag,))
-        cp_tree.tag_configure("perfect", background="#fff2cc")
-
     # Bindings
     # IME(한글) 조합 중에는 entry.get()이 비어있어서 실시간 필터링이 어려움.
     # → Enter 또는 검색 버튼으로 강제 확정. 폴링은 commit 후 반영 백업용 (느슨한 주기).
@@ -6054,12 +5759,6 @@ def run_gui(gm):
 
     def _iv_apply():
         refresh()
-        # 현재 IV로 포켓몬 찾기 탭 활성 시 그쪽도 자동 갱신
-        try:
-            if notebook.tab(notebook.select(), "text").strip() == "PvP IV검색":
-                refresh_reverse()
-        except Exception:
-            pass
 
     atk_var.trace_add("write", on_iv_change)
     def_var.trace_add("write", on_iv_change)
@@ -6079,20 +5778,18 @@ def run_gui(gm):
     summary_tree.bind("<<TreeviewSelect>>", on_summary_select)
     def _on_listbox_select(_e=None):
         refresh()
-        # 활성 탭에 따라 추가 갱신 (PvE DPS / PvE 카운터 임의 보스 모드)
-        # — 사용자가 PvE 탭에 머무는 흐름을 깨지 않도록 그 탭들은 자동 전환 안 함.
+        # 활성 탭에 따라 추가 갱신 (PvE 카운터 임의 보스 모드)
+        # — 사용자가 PvE 탭에 머무는 흐름을 깨지 않도록 그 탭은 자동 전환 안 함.
         active_tab_text = ""
         try:
             active_tab_text = notebook.tab(notebook.select(), "text").strip()
-            if active_tab_text == "PvE DPS":
-                refresh_pve_dps()
-            elif active_tab_text == "PvE 카운터" and use_selected_var.get():
+            if active_tab_text == "PvE 카운터" and use_selected_var.get():
                 refresh_counters()
         except Exception:
             pass
-        # PvE DPS / PvE 카운터(임의 보스) 외의 탭에서는 PvP 분석으로 자동 점프
+        # PvE 카운터(임의 보스) 외의 탭에서는 PvP 분석으로 자동 점프
         # — 좌측에서 종을 클릭한 의도는 보통 그 종의 PvP 분석 보기.
-        if active_tab_text not in ("PvE DPS",) and not (
+        if not (
             active_tab_text == "PvE 카운터" and use_selected_var.get()
         ):
             try:
@@ -6143,29 +5840,131 @@ def run_gui(gm):
         root.bind(f"<Alt-Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
     root.bind("<Control-r>", lambda e: do_data_refresh())
 
-    # IV 역검색 / 레이드 카운터 탭으로 전환 시 자동으로 결과 갱신
+    # ===== 오늘 할 일 대시보드 (레이드·이벤트·알·리서치 한눈에) =====
+    # 모든 일정 state 가 만들어진 뒤(여기) 구성 → notebook.insert 로 일정 그룹 앞으로 이동
+    dash_tab = ttk.Frame(notebook, padding=(10, 8))
+    notebook.add(dash_tab, text="  오늘 할 일  ")
+
+    dash_head = ttk.Frame(dash_tab)
+    dash_head.pack(fill="x", pady=(0, 4))
+    ttk.Label(dash_head, text="오늘 할 일 — 레이드·이벤트·알·리서치 요약",
+              font=("", 11, "bold")).pack(side="left")
+    ttk.Button(dash_head, text="새로고침", width=10,
+               command=lambda: _refresh_dashboard()).pack(side="right")
+
+    # 스크롤 가능한 본문
+    dash_canvas = tk.Canvas(dash_tab, highlightthickness=0)
+    dash_vsb = ttk.Scrollbar(dash_tab, orient="vertical", command=dash_canvas.yview)
+    dash_canvas.configure(yscrollcommand=dash_vsb.set)
+    dash_vsb.pack(side="right", fill="y")
+    dash_canvas.pack(side="left", fill="both", expand=True)
+    dash_body = ttk.Frame(dash_canvas)
+    dash_win = dash_canvas.create_window((0, 0), window=dash_body, anchor="nw")
+    dash_body.bind("<Configure>",
+                   lambda e: dash_canvas.configure(scrollregion=dash_canvas.bbox("all")))
+    dash_canvas.bind("<Configure>",
+                     lambda e: dash_canvas.itemconfigure(dash_win, width=e.width))
+
+    def _dash_wheel(e):
+        dash_canvas.yview_scroll(int(-(e.delta or 0) / 120), "units")
+    dash_canvas.bind("<Enter>", lambda e: dash_canvas.bind_all("<MouseWheel>", _dash_wheel))
+    dash_canvas.bind("<Leave>", lambda e: dash_canvas.unbind_all("<MouseWheel>"))
+
+    def _refresh_dashboard():
+        for w in dash_body.winfo_children():
+            w.destroy()
+        now = datetime.now()
+
+        def section(title):
+            ttk.Label(dash_body, text=title, font=("", 11, "bold"),
+                      foreground="#222").pack(anchor="w", pady=(12, 2))
+
+        def line(txt, color="#333"):
+            ttk.Label(dash_body, text=txt, font=("", 9),
+                      foreground=color).pack(anchor="w", padx=(14, 0))
+
+        def _pdt(iso):
+            try:
+                return datetime.fromisoformat((iso or "").replace("Z", "").split(".")[0]) if iso else None
+            except Exception:
+                return None
+
+        # ── 이벤트: 진행 중 / 곧 시작 (이번 달) ──
+        active, soon = [], []
+        for ev in events_state.get("data", []):
+            s, e = _pdt(ev.get("start")), _pdt(ev.get("end"))
+            if s and e:
+                if e < now:
+                    continue
+                if s <= now <= e:
+                    active.append((s, e, ev))
+                elif s <= now + timedelta(days=31):
+                    soon.append((s, e, ev))
+            elif s and s >= now and s <= now + timedelta(days=31):
+                soon.append((s, None, ev))
+        active.sort(key=lambda x: x[1] or datetime.max)
+        soon.sort(key=lambda x: x[0])
+
+        section(f"🟢 진행 중 이벤트 ({len(active)})")
+        if not active:
+            line("진행 중인 이벤트 없음", "#999")
+        for _s, _e, ev in active[:15]:
+            line(f"• {ev.get('name','')}  —  ~{_format_iso_short(ev.get('end'))} 종료", "#2a7a3a")
+
+        section(f"🔜 곧 시작 (이번 달, {len(soon)})")
+        if not soon:
+            line("예정 이벤트 없음", "#999")
+        for _s, _e, ev in soon[:15]:
+            line(f"• {ev.get('name','')}  —  {_format_iso_short(ev.get('start'))} 시작", "#a06020")
+
+        # ── 주목 레이드 (5★ / 메가 / 엘리트) ──
+        bosses = raid_state.get("bosses", []) or []
+        hi = [b for b in bosses
+              if any(k in (b.get("tier") or "").lower() for k in ("5-star", "mega", "elite"))]
+        section(f"⚔️ 주목 레이드 ({len(hi)})")
+        if not hi:
+            line("표시할 레이드 없음 — '데이터 업데이트' 후 확인", "#999")
+        for b in hi[:16]:
+            ko = b.get("_name_ko") or _en_to_display(b.get("name", "?"))
+            tl = (b.get("tier") or "").lower()
+            tier_ko = "5★" if "5-star" in tl else ("메가" if "mega" in tl else "엘리트")
+            tnames = [(t.get("name") if isinstance(t, dict) else t) or ""
+                      for t in (b.get("types", []) or [])]
+            tstr = " · ".join(TYPE_KO.get(n.lower(), n) for n in tnames if n)
+            line(f"• [{tier_ko}] {ko}    {tstr}")
+
+        # ── 알 / 리서치 요약 ──
+        eggs = eggs_state.get("data", []) or []
+        shiny_eggs = sum(1 for e in eggs if e.get("canBeShiny"))
+        res = research_state.get("data", []) or []
+        section("🥚 알 부화 · 🔬 리서치")
+        line(f"부화 풀 {len(eggs)}종 (색이 다른 포켓몬 {shiny_eggs}종) — 자세히는 '알 부화' 탭")
+        line(f"필드 리서치 과제 {len(res)}건 — 자세히는 '리서치' 탭")
+
+        ttk.Label(dash_body, text=f"갱신: {now:%Y-%m-%d %H:%M}",
+                  font=("", 8), foreground="#999").pack(anchor="w", pady=(14, 0))
+
+    _refresh_dashboard()
+
+    # 레이드 카운터 등 탭으로 전환 시 자동으로 결과 갱신
     def _on_tab_changed(_e=None):
         try:
             tab = notebook.tab(notebook.select(), "text").strip()
-            if tab == "PvP IV검색":
-                refresh_reverse()
+            if tab == "PvP 메타":
+                _refresh_meta_active()
             elif tab == "PvE 카운터":
                 refresh_counters()
-            elif tab == "PvE DPS":
-                refresh_pve_dps()
             elif tab == "PvE 로켓":
                 refresh_rocket()
-            elif tab == "팀 메타":
-                _refresh_team_meta()
+            elif tab == "오늘 할 일":
+                _refresh_dashboard()
         except Exception:
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
 
-    # 탭 순서 재배치: PvP 팀 메타를 PvP 그룹(PvP CP→IV 뒤, idx=5)으로 이동.
-    # 다른 탭은 add 순서 그대로. insert 는 같은 widget 이면 자동 이동.
-    # (PvP 비교 탭이 idx=1 로 추가되면서 한 칸씩 밀림 → 5)
+    # 대시보드를 일정 그룹(레이드 일정) 앞으로 이동
     try:
-        notebook.insert(5, team_meta_tab)
+        notebook.insert(6, dash_tab)
     except Exception:
         pass
 
