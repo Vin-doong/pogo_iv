@@ -2573,6 +2573,88 @@ def analyze_cli(gm, ko_base_map, sid_to_display, name, ivs, max_level):
               f"랭크 #{rank}/4096 @ Lv{lvl:g}, CP {cp}")
 
 
+def _find_league(name):
+    """리그명(부분 일치 허용) → League 객체 (없으면 None)."""
+    nl = name.strip().replace(" ", "").lower()
+    if not nl:
+        return None
+    for lg in LEAGUES:
+        if lg.name.replace(" ", "").lower() == nl:
+            return lg
+    for lg in LEAGUES:
+        if nl in lg.name.replace(" ", "").lower():
+            return lg
+    return None
+
+
+def report_best_ivs_per_league(gm, ko_base_map, sid_to_display, name, max_level):
+    """개체값 입력 없이 — 각 리그에서 '제일 좋은 개체값(랭크 #1)'을 보여준다."""
+    p, alts = find_pokemon_cli(gm, ko_base_map, name)
+    if not p:
+        print(f"'{name}' — 찾을 수 없음. 예: 마릴리, 메가 갸라도스, 그림자 뮤츠")
+        return
+    if alts:
+        print(f"[다른 후보: {', '.join(alts)}]")
+    base = p["baseStats"]
+    sid = p["speciesId"]
+    disp = sid_to_display.get(sid, p.get("speciesName", sid))
+    max_idx = min(int(round((max_level - 1.0) * 2)), len(CPM) - 1)
+    print(f"\n=== {disp} ({sid}) — 리그별 최고 개체값 ===")
+    print(f"종족값: Atk {base['atk']} / Def {base['def']} / HP {base['hp']}\n")
+    headers = ["리그", "베스트 IV(공/방/체)", "레벨", "CP", "스탯곱(SP)"]
+    table = [headers]
+    for lg in LEAGUES:
+        ranked = rank_all(base, lg.cap, max_idx)
+        if not ranked or ranked[0][1] == 0:
+            table.append([lg.name, "—", "—", "—", "—"])
+            continue
+        iv, sp, lvl_idx, cp = ranked[0]
+        table.append([lg.name, f"{iv[0]}/{iv[1]}/{iv[2]}",
+                      f"Lv{level_from_idx(lvl_idx):g}", str(cp), f"{sp:,.0f}"])
+    widths = [max(_dwidth(row[i]) for row in table) for i in range(len(headers))]
+    for i, row in enumerate(table):
+        print("  ".join(_pad(c, w) for c, w in zip(row, widths)))
+        if i == 0:
+            print("  ".join("-" * w for w in widths))
+    print("\n특정 리그의 상위 개체값 목록을 보려면 개체값 대신 리그명을 입력하세요 "
+          "(예: 슈퍼리그). 단발 실행은 --league 슈퍼리그 [--top 20]")
+
+
+def report_top_ivs_for_league(gm, ko_base_map, sid_to_display, name, lg,
+                              max_level, topn=10):
+    """특정 리그에서 상위 N개 개체값(순위표)을 보여준다."""
+    p, alts = find_pokemon_cli(gm, ko_base_map, name)
+    if not p:
+        print(f"'{name}' — 찾을 수 없음.")
+        return
+    if alts:
+        print(f"[다른 후보: {', '.join(alts)}]")
+    base = p["baseStats"]
+    sid = p["speciesId"]
+    disp = sid_to_display.get(sid, p.get("speciesName", sid))
+    max_idx = min(int(round((max_level - 1.0) * 2)), len(CPM) - 1)
+    ranked = rank_all(base, lg.cap, max_idx)
+    if not ranked or ranked[0][1] == 0:
+        print(f"{disp} — {lg.name}에서 유효한 개체값 없음 (CP 상한 미달).")
+        return
+    top_sp = ranked[0][1]
+    print(f"\n=== {disp} ({sid}) — {lg.name} 상위 {topn} 개체값 ===")
+    print(f"종족값: Atk {base['atk']} / Def {base['def']} / HP {base['hp']}\n")
+    headers = ["순위", "공/방/체", "레벨", "CP", "스탯곱(SP)", "베스트대비"]
+    table = [headers]
+    for rk, (iv, sp, lvl_idx, cp) in enumerate(ranked[:topn], 1):
+        if sp == 0:
+            continue
+        table.append([f"#{rk}", f"{iv[0]}/{iv[1]}/{iv[2]}",
+                      f"Lv{level_from_idx(lvl_idx):g}", str(cp), f"{sp:,.0f}",
+                      f"{sp / top_sp * 100:.2f}%"])
+    widths = [max(_dwidth(row[i]) for row in table) for i in range(len(headers))]
+    for i, row in enumerate(table):
+        print("  ".join(_pad(c, w) for c, w in zip(row, widths)))
+        if i == 0:
+            print("  ".join("-" * w for w in widths))
+
+
 def parse_ivs(s):
     parts = s.replace(",", " ").replace("/", " ").split()
     if len(parts) != 3:
@@ -2588,9 +2670,24 @@ def run_cli(args, gm):
     ko_base_map = build_ko_base_map(gm, dex_to_ko)
     sid_to_display = {sid: disp for disp, sid in build_display_entries(gm, dex_to_ko)}
 
+    # 단발 실행
     if args.pokemon and len(args.ivs) == 3:
         ivs = parse_ivs(" ".join(args.ivs))
         analyze_cli(gm, ko_base_map, sid_to_display, args.pokemon, ivs, args.max_level)
+        return
+    if args.pokemon and not args.ivs:
+        # 개체값 없이 이름만 → 제일 좋은 개체값 조회
+        if args.league:
+            lg = _find_league(args.league)
+            if not lg:
+                print(f"리그를 찾을 수 없음: {args.league}  "
+                      f"(가능: {', '.join(l.name for l in LEAGUES)})")
+                return
+            report_top_ivs_for_league(gm, ko_base_map, sid_to_display,
+                                      args.pokemon, lg, args.max_level, args.top)
+        else:
+            report_best_ivs_per_league(gm, ko_base_map, sid_to_display,
+                                       args.pokemon, args.max_level)
         return
 
     print("Pokemon GO PvP 개체값 리그 랭커 (CLI)")
@@ -2603,7 +2700,19 @@ def run_cli(args, gm):
             if not name:
                 print("종료.")
                 break
-            iv_str = input("개체값 (예: 1 15 14): ").strip()
+            iv_str = input("개체값 (예: 1 15 14 · 빈칸=리그별 최고 개체값 · "
+                           "리그명=그 리그 상위 목록): ").strip()
+            if not iv_str:
+                report_best_ivs_per_league(gm, ko_base_map, sid_to_display,
+                                           name, args.max_level)
+                print()
+                continue
+            lg = _find_league(iv_str)
+            if lg and not any(ch.isdigit() for ch in iv_str):
+                report_top_ivs_for_league(gm, ko_base_map, sid_to_display,
+                                          name, lg, args.max_level, args.top)
+                print()
+                continue
             ivs = parse_ivs(iv_str)
             analyze_cli(gm, ko_base_map, sid_to_display, name, ivs, args.max_level)
             print()
@@ -6480,6 +6589,11 @@ def main():
     ap.add_argument("--max-level", type=float, default=DEFAULT_MAX_LEVEL,
                     help="최대 레벨 (기본 50 = Best Buddy 없이 도달 가능; "
                          "Best Buddy 활성 시 51 지정)")
+    ap.add_argument("--league", metavar="리그",
+                    help="개체값 없이 이름만 줄 때, 이 리그의 상위 개체값 목록 출력 "
+                         "(예: --league 슈퍼리그). 생략하면 리그별 최고 개체값 표")
+    ap.add_argument("--top", type=int, default=10,
+                    help="--league 와 함께 — 상위 몇 개 개체값을 보일지 (기본 10)")
     ap.add_argument("--refresh", action="store_true",
                     help="시즌 데이터 강제 재다운로드 (gamemaster + rankings)")
     ap.add_argument("--attackers", metavar="타입",

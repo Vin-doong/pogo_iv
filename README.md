@@ -51,6 +51,12 @@ python pogo_iv.py --cli
 python pogo_iv.py 마릴리 0 15 15
 python pogo_iv.py "메가 갸라도스" 15 15 15 --max-level 50
 
+# 제일 좋은 개체값 조회 (개체값 없이 이름만)
+python pogo_iv.py 마릴리                       # 리그별 최고 개체값(랭크 #1) 표
+python pogo_iv.py 마릴리 --league 슈퍼리그      # 슈퍼리그 상위 개체값 목록
+python pogo_iv.py 마릴리 --league 슈퍼리그 --top 20
+# (대화형에서도 개체값 칸을 비우면 리그별 최고, 리그명을 넣으면 그 리그 상위 목록)
+
 # PvE 투자 가이드
 python pogo_iv.py --attackers 불꽃          # 불꽃 타입 범용 PvE 딜러 랭킹 (DPS 순)
 python pogo_iv.py --attackers dragon -n 30  # 영문 타입 + 개수 지정
