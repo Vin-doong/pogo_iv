@@ -1338,11 +1338,15 @@ def _combo_dps(fast_dmg, fast_cd_s, fast_egain, charged_dmg, charged_cd_s, charg
 
 def attacker_dps_vs(attacker, fast, charged, boss_types,
                     boss_cpm=0.79, boss_base_def=180, weather=None,
-                    attacker_level=50, boss_base_atk=None):
+                    attacker_level=50, boss_base_atk=None,
+                    boss_fast=None, boss_charged=None):
     """공격자 1마리 × (속공, 차지) 조합 → DPS / TDO / eDPS.
     attacker: PvPoke pokemon 엔트리. fast/charged: gamemaster moves 엔트리.
     boss_types: 보스 타입 list (소문자, 'none' 허용).
     weather: 날씨 string (부스트 계산), None 이면 부스트 없음.
+    boss_fast/boss_charged: 보스의 대표 무브셋(moves 엔트리). 주어지면 보스가
+        공격자에게 입히는 피해를 실제 기술 + 타입 상성으로 계산해 TDO 정확도를
+        높인다 (boss_best_moveset 으로 미리 구함). 없으면 base_atk 휴리스틱 폴백.
     """
     base = attacker.get("baseStats", {})
     sid = attacker.get("speciesId", "")
@@ -1369,10 +1373,27 @@ def attacker_dps_vs(attacker, fast, charged, boss_types,
                      fast.get("energyGain", 0),
                      charged_dmg, charged.get("cooldown", 500) / 1000.0,
                      charged.get("energy", 0))
-    # TDO 근사: HP * DPS / 보스가 1초당 우리에게 입히는 추정데미지
-    # 보스 실제 base atk 사용 (없으면 def*1.5 로 폴백). 정확도 보다는 ranking 보조용.
-    boss_atk = boss_base_atk if boss_base_atk else boss_base_def * 1.5
-    incoming_dps = max(1.0, boss_atk * boss_cpm / def_eff * 35.0)
+    # 보스가 1초당 공격자에게 입히는 피해(incoming DPS) → 생존시간 → TDO.
+    if boss_fast and boss_charged and boss_base_atk:
+        # 정확 모드: 보스 실제 무브셋으로 데미지 계산. 보스는 레이드 표준대로
+        # IV 가산 없이 base_atk × tier CPM. 공격자 타입(atk_types)에 대한 상성·
+        # 보스 STAB·날씨 부스트까지 반영 → 보스 기술에 약점/내성인 카운터를 구분.
+        boss_atk_eff = boss_base_atk * boss_cpm
+        bf_dmg = _move_damage(boss_fast.get("power", 0), boss_atk_eff, def_eff,
+                              boss_fast.get("type", ""), boss_types, atk_types,
+                              boss_fast.get("type", "") in boosted_types)
+        bc_dmg = _move_damage(boss_charged.get("power", 0), boss_atk_eff, def_eff,
+                              boss_charged.get("type", ""), boss_types, atk_types,
+                              boss_charged.get("type", "") in boosted_types)
+        incoming_dps = max(1.0, _combo_dps(
+            bf_dmg, boss_fast.get("cooldown", 1000) / 1000.0,
+            boss_fast.get("energyGain", 0),
+            bc_dmg, boss_charged.get("cooldown", 500) / 1000.0,
+            boss_charged.get("energy", 0)))
+    else:
+        # 폴백: 보스 무브셋 정보 없을 때 base_atk × 상수 휴리스틱.
+        boss_atk = boss_base_atk if boss_base_atk else boss_base_def * 1.5
+        incoming_dps = max(1.0, boss_atk * boss_cpm / def_eff * 35.0)
     survival_s = hp / incoming_dps
     tdo = dps * survival_s
     edps = (dps * tdo) ** 0.5 if tdo > 0 else 0.0
@@ -1380,9 +1401,39 @@ def attacker_dps_vs(attacker, fast, charged, boss_types,
             "fast_dmg": fast_dmg, "charged_dmg": charged_dmg, "hp": hp}
 
 
+def boss_best_moveset(boss, moves_by_id, boss_cpm, boss_base_atk):
+    """보스의 대표 무브셋(중립 방어자 기준 DPS 최고) → (fast_move, charged_move).
+    공격자별로 달라지지 않는 '보스가 실제로 쓰는 한 세트'를 고정하기 위해 미리 구한다
+    (공격자마다 보스가 약점 커버 기술로 바꿔 쓴다고 가정하면 incoming 이 과대평가됨)."""
+    fasts = (boss.get("fastMoves") or []) + (boss.get("eliteMoves") or [])
+    chargeds = (boss.get("chargedMoves") or []) + (boss.get("eliteMoves") or [])
+    boss_types = [t for t in boss.get("types", []) if t and t != "none"]
+    atk_eff = (boss_base_atk or 180) * boss_cpm  # 보스는 IV 가산 없음
+    best, best_dps = None, -1.0
+    for fid in fasts:
+        f = moves_by_id.get(fid)
+        if not f or f.get("energyGain", 0) <= 0:
+            continue
+        f_dmg = _move_damage(f.get("power", 0), atk_eff, 100.0,
+                             f.get("type", ""), boss_types, [], False)
+        for cid in chargeds:
+            c = moves_by_id.get(cid)
+            if not c or c.get("energy", 0) <= 0:
+                continue
+            c_dmg = _move_damage(c.get("power", 0), atk_eff, 100.0,
+                                 c.get("type", ""), boss_types, [], False)
+            dps = _combo_dps(f_dmg, f.get("cooldown", 1000) / 1000.0,
+                             f.get("energyGain", 0),
+                             c_dmg, c.get("cooldown", 500) / 1000.0,
+                             c.get("energy", 0))
+            if dps > best_dps:
+                best_dps, best = dps, (f, c)
+    return best  # None 이면 호출부에서 휴리스틱 폴백
+
+
 def best_moveset_vs(attacker, boss_types, moves_by_id, boss_cpm=0.79,
                     boss_base_def=180, weather=None, attacker_level=50,
-                    boss_base_atk=None):
+                    boss_base_atk=None, boss_fast=None, boss_charged=None):
     """공격자의 모든 (속공×차지) 조합 중 eDPS 최고 무브셋 반환."""
     fasts = (attacker.get("fastMoves") or []) + (attacker.get("eliteMoves") or [])
     chargeds = (attacker.get("chargedMoves") or []) + (attacker.get("eliteMoves") or [])
@@ -1397,7 +1448,7 @@ def best_moveset_vs(attacker, boss_types, moves_by_id, boss_cpm=0.79,
                 continue
             r = attacker_dps_vs(attacker, f, c, boss_types,
                                 boss_cpm, boss_base_def, weather, attacker_level,
-                                boss_base_atk)
+                                boss_base_atk, boss_fast, boss_charged)
             if best is None or r["edps"] > best["edps"]:
                 best = {**r, "fast_id": fid, "charged_id": cid,
                         "fast_type": f.get("type", ""), "charged_type": c.get("type", "")}
@@ -1422,6 +1473,10 @@ def top_counters(boss, gm, moves_by_id, n=20, weather=None,
     else:
         boss_cpm = RAID_TIER_CPM["5"]
 
+    # 보스 대표 무브셋을 한 번만 구해 모든 공격자에 재사용 → TDO 정확 모드.
+    bm_pair = boss_best_moveset(boss, moves_by_id, boss_cpm, boss_base_atk)
+    boss_fast, boss_charged = bm_pair if bm_pair else (None, None)
+
     results = []
     for p in gm.get("pokemon", []):
         sid = p.get("speciesId", "")
@@ -1441,12 +1496,118 @@ def top_counters(boss, gm, moves_by_id, n=20, weather=None,
                 continue
         bm = best_moveset_vs(p, boss_types, moves_by_id, boss_cpm,
                              boss_base_def, weather, attacker_level,
-                             boss_base_atk)
+                             boss_base_atk, boss_fast, boss_charged)
         if bm is None:
             continue
         results.append({"sid": sid, "pokemon": p, **bm})
     results.sort(key=lambda r: r["edps"], reverse=True)
     return results[:n]
+
+
+# 범용 PvE 딜러 평가용 가상 5성 보스 근사.
+GENERIC_DEF_BASE = 180   # 평균 5성 보스 방어 종족값 근사
+GENERIC_DEF_ATK = 200    # incoming DPS 추정용 보스 공격 (TDO 분모)
+
+# 타입별 딜러 랭킹은 "그 타입에 약점인 방어자" 기준으로 평가한다. 그래야 STAB·약점
+# 보너스를 받는 진짜 해당 타입 딜러가 상위에 오고, 비STAB 차지만 가진 포켓몬
+# (예: 그란돈 + 불대문자)이 과대평가되지 않는다. (normal 은 약점 타입이 없어 중립)
+TYPE_WEAK_DEFENDER = {
+    "normal": None, "fire": "grass", "water": "rock", "electric": "water",
+    "grass": "water", "ice": "dragon", "fighting": "normal", "poison": "grass",
+    "ground": "rock", "flying": "grass", "psychic": "fighting", "bug": "psychic",
+    "rock": "flying", "ghost": "psychic", "dragon": "dragon", "dark": "psychic",
+    "steel": "fairy", "fairy": "dragon",
+}
+
+
+def all_type_attacker_rankings(gm, moves_by_id, attacker_level=40,
+                               include_shadow=True, include_mega=True,
+                               include_legendary=True):
+    """전 포켓몬을 1회 순회하며, 각 공격 타입별 최적 무브셋 eDPS 랭킹을 만든다.
+    중립 방어자 기준이라 '이 타입 딜러로 키울 가치' 판단용. (타입별 list, eDPS 내림차순)
+    반환: {atype: [{sid, pokemon, edps, dps, tdo, fast_id, charged_id}, ...]}"""
+    boss_cpm = RAID_TIER_CPM["5"]
+    by_type = {t: [] for t in TYPES_ORDER}
+    for p in gm.get("pokemon", []):
+        sid = p.get("speciesId", "")
+        if p.get("released") is False:
+            continue
+        if not include_shadow and sid.endswith("_shadow"):
+            continue
+        if not include_mega and sid.endswith(("_mega", "_mega_x", "_mega_y")):
+            continue
+        if not include_legendary:
+            tags = p.get("tags") or []
+            if "legendary" in tags or "mythical" in tags:
+                continue
+        fasts = (p.get("fastMoves") or []) + (p.get("eliteMoves") or [])
+        chargeds = (p.get("chargedMoves") or []) + (p.get("eliteMoves") or [])
+        # 차지 무브 타입별 최적 무브셋 (주력 데미지 = 차지 타입으로 분류)
+        best_by_ctype = {}
+        for fid in fasts:
+            f = moves_by_id.get(fid)
+            if not f or f.get("energyGain", 0) <= 0:
+                continue
+            for cid in chargeds:
+                c = moves_by_id.get(cid)
+                if not c or c.get("energy", 0) <= 0:
+                    continue
+                ct = c.get("type")
+                if ct not in by_type:
+                    continue
+                weak = TYPE_WEAK_DEFENDER.get(ct)
+                def_types = [weak] if weak else []
+                r = attacker_dps_vs(p, f, c, def_types, boss_cpm, GENERIC_DEF_BASE,
+                                    None, attacker_level, GENERIC_DEF_ATK)
+                prev = best_by_ctype.get(ct)
+                if prev is None or r["edps"] > prev["edps"]:
+                    best_by_ctype[ct] = {**r, "fast_id": fid, "charged_id": cid}
+        for ct, rec in best_by_ctype.items():
+            by_type[ct].append({"sid": sid, "pokemon": p, **rec})
+    # 범용 딜러 가치는 DPS 우선 (eDPS 는 내구가 과대 반영돼 그란돈류 비전문 탱키가
+    # 상위로 올라옴). '뭘 키울까'는 화력 기준이 직관적이라 DPS 로 정렬.
+    for t in by_type:
+        by_type[t].sort(key=lambda r: r["dps"], reverse=True)
+    return by_type
+
+
+def best_attackers_for_type(gm, moves_by_id, atype, n=20, attacker_level=40,
+                            include_shadow=True, include_mega=True,
+                            include_legendary=True):
+    """특정 공격 타입의 범용 PvE 딜러 TOP N (= '뭘 키워야 하나' 가이드)."""
+    rankings = all_type_attacker_rankings(gm, moves_by_id, attacker_level,
+                                          include_shadow, include_mega,
+                                          include_legendary)
+    return rankings.get(atype, [])[:n]
+
+
+def investment_priority(gm, moves_by_id, favorites, attacker_level=40,
+                        include_shadow=True, include_mega=True, rankings=None):
+    """즐겨찾기(보유 가정) 포켓몬을 PvE 투자 가치 순으로 정렬.
+    각 포켓몬의 '최고 가치 역할'(DPS 최고 타입) + 그 타입 범용 랭킹 내 순위/백분위를
+    매겨, 상위권일수록 투자 우선. 반환 list 는 우선순위 내림차순.
+    rankings: all_type_attacker_rankings 결과를 미리 넘기면 재계산 생략."""
+    if rankings is None:
+        rankings = all_type_attacker_rankings(gm, moves_by_id, attacker_level,
+                                              include_shadow, include_mega, True)
+    locate = {}  # sid -> [{type, rank, total, edps, fast_id, charged_id}, ...]
+    for atype, lst in rankings.items():
+        total = len(lst)
+        for i, r in enumerate(lst):
+            locate.setdefault(r["sid"], []).append({
+                "type": atype, "rank": i + 1, "total": total,
+                "dps": r["dps"], "edps": r["edps"], "fast_id": r["fast_id"],
+                "charged_id": r["charged_id"]})
+    out = []
+    for sid in favorites:
+        recs = locate.get(sid)
+        if not recs:
+            continue
+        best = max(recs, key=lambda x: x["dps"])  # 최고 가치 역할 (화력 기준)
+        out.append({"sid": sid, **best,
+                    "percentile": best["rank"] / max(1, best["total"]) * 100})
+    out.sort(key=lambda x: x["rank"] / max(1, x["total"]))
+    return out
 
 
 # (species_base_id, move_id) → 획득 경로. PvPoke 의 eliteMoves 는 단일 boolean 이라
@@ -4459,6 +4620,171 @@ def run_gui(gm):
             return out
         return name
 
+    # ===== Tab: PvE 투자 추천 (타입별 범용 딜러 랭킹 + 즐겨찾기 투자 우선순위) =====
+    invest_tab = ttk.Frame(notebook, padding=(8, 8))
+    notebook.add(invest_tab, text="  PvE 투자  ")
+
+    inv_cache = {}  # (level, shadow, mega, legend) → all_type_attacker_rankings 결과
+
+    def _inv_rankings(level, shadow, mega, legend):
+        key = (level, shadow, mega, legend)
+        if key not in inv_cache:
+            inv_cache[key] = all_type_attacker_rankings(
+                state["gm"], moves_by_id, level, shadow, mega, legend)
+        return inv_cache[key]
+
+    inv_top = ttk.Frame(invest_tab)
+    inv_top.pack(fill="x", pady=(0, 6))
+
+    inv_mode_var = tk.StringVar(value="type")
+    ttk.Radiobutton(inv_top, text="타입별 딜러", value="type",
+                    variable=inv_mode_var,
+                    command=lambda: _inv_refresh()).pack(side="left")
+    ttk.Radiobutton(inv_top, text="내 즐겨찾기 투자", value="fav",
+                    variable=inv_mode_var,
+                    command=lambda: _inv_refresh()).pack(side="left", padx=(6, 16))
+
+    inv_type_lbl = ttk.Label(inv_top, text="타입", font=("", 10, "bold"))
+    inv_type_lbl.pack(side="left")
+    inv_type_var = tk.StringVar(value=TYPE_KO["fire"])
+    inv_type_combo = make_searchable_combo(
+        inv_top, inv_type_var, [TYPE_KO[t] for t in TYPES_ORDER if t != "normal"],
+        on_select=lambda: _inv_refresh(), width=8, height=20)
+    inv_type_combo.pack(side="left", padx=(6, 16))
+
+    ttk.Label(inv_top, text="공격자 Lv", font=("", 10, "bold")).pack(side="left", padx=(0, 4))
+    inv_lv_var = tk.StringVar(value="40")
+    inv_lv_combo = ttk.Combobox(inv_top, textvariable=inv_lv_var,
+                                values=["40", "45", "50", "51"], width=5,
+                                state="readonly")
+    inv_lv_combo.pack(side="left", padx=(0, 16))
+    inv_lv_combo.bind("<<ComboboxSelected>>", lambda e: _inv_refresh())
+
+    inv_filter_row = ttk.Frame(invest_tab)
+    inv_filter_row.pack(fill="x", pady=(0, 6))
+    ttk.Label(inv_filter_row, text="포함:", font=("", 9), foreground="#555"
+              ).pack(side="left", padx=(0, 6))
+    inv_inc_mega   = tk.BooleanVar(value=True)
+    inv_inc_shadow = tk.BooleanVar(value=True)
+    inv_inc_legend = tk.BooleanVar(value=True)
+    for txt, var in (("메가", inv_inc_mega), ("그림자", inv_inc_shadow),
+                     ("전설/환상", inv_inc_legend)):
+        ttk.Checkbutton(inv_filter_row, text=txt, variable=var,
+                        command=lambda: _inv_refresh()).pack(side="left", padx=(0, 8))
+    ttk.Label(inv_filter_row, text="행 더블클릭 → PvP 분석으로 이동",
+              font=("", 8), foreground="#888").pack(side="right")
+
+    inv_info_var = tk.StringVar(value="")
+    ttk.Label(invest_tab, textvariable=inv_info_var, font=("", 9),
+              foreground="#444", justify="left", wraplength=1000
+              ).pack(anchor="w", pady=(0, 4))
+
+    inv_table_frame = ttk.Frame(invest_tab)
+    inv_table_frame.pack(fill="both", expand=True)
+    inv_scroll = ttk.Scrollbar(inv_table_frame, orient="vertical")
+    inv_scroll.pack(side="right", fill="y")
+    inv_tree = ttk.Treeview(inv_table_frame, show="headings",
+                            yscrollcommand=inv_scroll.set, height=22)
+    inv_tree.pack(side="left", fill="both", expand=True)
+    inv_scroll.config(command=inv_tree.yview)
+
+    def _inv_on_double(_e=None):
+        """행 더블클릭 → 좌측 리스트에서 그 포켓몬 선택 + PvP 분석 탭으로 이동."""
+        sel = inv_tree.selection()
+        if not sel:
+            return
+        disp = inv_tree.set(sel[0], "name")
+        if disp:
+            select_pokemon_by_display(disp)
+            notebook.select(iv_tab)
+    inv_tree.bind("<Double-1>", _inv_on_double)
+
+    inv_cols_type = ("rank", "name", "types", "fast", "charged", "dps", "edps", "tdo")
+    inv_labels_type = ["#", "포켓몬", "타입", "속공", "차지", "DPS", "eDPS", "TDO"]
+    inv_widths_type = [40, 170, 110, 130, 140, 70, 70, 80]
+    inv_cols_fav = ("name", "role", "rank", "dps", "edps", "grade")
+    inv_labels_fav = ["포켓몬", "역할(타입)", "타입내 순위", "DPS", "eDPS", "등급"]
+    inv_widths_fav = [180, 100, 110, 70, 70, 110]
+
+    def _inv_set_columns(cols, labels, widths):
+        inv_tree.config(columns=cols)
+        for c, l, w in zip(cols, labels, widths):
+            inv_tree.heading(c, text=l,
+                             command=lambda col=c: _sort_tree(inv_tree, col))
+            anchor = "w" if c in ("name", "fast", "charged") else "center"
+            inv_tree.column(c, width=w, anchor=anchor)
+
+    def _inv_grade(pct):
+        if pct <= 5:
+            return "★★★ 최우선"
+        if pct <= 15:
+            return "★★ 우선"
+        if pct <= 35:
+            return "★ 쓸만함"
+        return "— 비주력"
+
+    def _inv_refresh():
+        for r in inv_tree.get_children():
+            inv_tree.delete(r)
+        try:
+            level = float(inv_lv_var.get())
+        except ValueError:
+            level = 40.0
+        shadow, mega, legend = (inv_inc_shadow.get(), inv_inc_mega.get(),
+                                inv_inc_legend.get())
+        mode = inv_mode_var.get()
+        # 타입 선택 위젯은 타입 모드에서만 의미 있음
+        show_type = (mode == "type")
+        for w in (inv_type_lbl, inv_type_combo):
+            try:
+                w.configure(state=("normal" if show_type else "disabled"))
+            except tk.TclError:
+                pass
+        if mode == "type":
+            _inv_set_columns(inv_cols_type, inv_labels_type, inv_widths_type)
+            atype = _TYPE_KO_TO_EN.get(inv_type_var.get(), "fire")
+            ranks = _inv_rankings(level, shadow, mega, legend)
+            rows = ranks.get(atype, [])[:50]
+            inv_info_var.set(
+                f"▶ {TYPE_KO.get(atype, atype)} 타입 범용 PvE 딜러 — "
+                f"'그 타입에 약점인 보스' 기준 DPS 순. 키울 가치 큰 딜러 가이드 "
+                f"(Lv{level:g}). 전설/메가 제외하면 현실적 후보만.")
+            for i, r in enumerate(rows, 1):
+                disp = sid_to_display.get(r["sid"], r["sid"])
+                tps = " · ".join(TYPE_KO.get(t, t) for t in r["pokemon"].get("types", [])
+                                 if t and t != "none")
+                ftype = TYPE_KO.get(r.get("fast_type", ""), "")
+                ctype = TYPE_KO.get(r.get("charged_type", ""), "")
+                inv_tree.insert("", "end", values=(
+                    i, disp, tps,
+                    f"{move_ko(r['fast_id'])} ({ftype})",
+                    f"{move_ko(r['charged_id'])} ({ctype})",
+                    f"{r['dps']:.1f}", f"{r['edps']:.1f}", f"{r['tdo']:.0f}"))
+            if not rows:
+                inv_info_var.set("해당 타입 딜러 없음 — 필터를 완화해보세요.")
+        else:
+            _inv_set_columns(inv_cols_fav, inv_labels_fav, inv_widths_fav)
+            if not favorites:
+                inv_info_var.set("즐겨찾기가 비어 있습니다. 좌측에서 ★ 로 보유/관심 "
+                                 "포켓몬을 등록하면 PvE 투자 우선순위를 매겨드립니다.")
+                return
+            ranks = _inv_rankings(level, shadow, mega, True)  # 투자는 전설 포함 비교
+            res = investment_priority(state["gm"], moves_by_id, favorites,
+                                      attacker_level=level, rankings=ranks)
+            inv_info_var.set(
+                f"▶ 즐겨찾기 {len(favorites)}마리의 PvE 투자 우선순위 — 각자의 최고 "
+                f"화력 역할(타입)과 그 타입 전체 딜러 중 순위. 상위권(★)일수록 키울 "
+                f"가치 큼 (Lv{level:g}).")
+            for r in res:
+                disp = sid_to_display.get(r["sid"], r["sid"])
+                inv_tree.insert("", "end", values=(
+                    disp, TYPE_KO.get(r["type"], r["type"]),
+                    f"#{r['rank']}/{r['total']}",
+                    f"{r['dps']:.1f}", f"{r['edps']:.1f}",
+                    _inv_grade(r["percentile"])))
+
+    _inv_refresh()
+
     _sort_state = {}  # tree id → (col, descending)
 
     def _sort_tree(tree, col):
@@ -6087,6 +6413,63 @@ def run_gui(gm):
 
 # ----- main -----
 
+def _pretty_move(mid):
+    """moveId(WATERFALL) → 보기 좋은 문자열(Waterfall)."""
+    return (mid or "").replace("_", " ").title()
+
+
+def print_attackers_cli(gm, type_input, n, level):
+    """--attackers: 특정 타입 범용 PvE 딜러 랭킹 출력."""
+    moves_by_id = {m["moveId"]: m for m in gm.get("moves", [])}
+    dex_to_ko = load_korean_dex_map()
+    sid_to_display = {sid: disp for disp, sid in build_display_entries(gm, dex_to_ko)}
+    atype = _TYPE_KO_TO_EN.get(type_input.strip(), type_input.strip().lower())
+    if atype not in TYPES_ORDER:
+        print(f"알 수 없는 타입: {type_input}  (가능: {', '.join(TYPE_KO.values())})")
+        return
+    res = best_attackers_for_type(gm, moves_by_id, atype, n=n, attacker_level=level)
+    print(f"=== {TYPE_KO.get(atype, atype)} 타입 범용 PvE 딜러 TOP {n} "
+          f"(Lv{level:g}, DPS 순) ===\n")
+    print(f"{'순위':<5}{'포켓몬':<20}{'eDPS':>7}{'DPS':>7}{'TDO':>7}  무브셋")
+    print("-" * 72)
+    for i, r in enumerate(res, 1):
+        disp = sid_to_display.get(r["sid"], r["sid"])
+        ms = f"{_pretty_move(r['fast_id'])} + {_pretty_move(r['charged_id'])}"
+        print(f"{i:<5}{disp:<20}{r['edps']:>7.1f}{r['dps']:>7.1f}"
+              f"{r['tdo']:>7.0f}  {ms}")
+
+
+def print_invest_cli(gm, n, level):
+    """--invest: 즐겨찾기 PvE 투자 우선순위 출력."""
+    favorites = load_favorites()
+    if not favorites:
+        print("즐겨찾기가 비어 있습니다. GUI 에서 ★ 로 보유/관심 포켓몬을 등록한 뒤 다시 실행하세요.")
+        return
+    moves_by_id = {m["moveId"]: m for m in gm.get("moves", [])}
+    dex_to_ko = load_korean_dex_map()
+    sid_to_display = {sid: disp for disp, sid in build_display_entries(gm, dex_to_ko)}
+    res = investment_priority(gm, moves_by_id, favorites, attacker_level=level)
+    print(f"=== 즐겨찾기 PvE 투자 우선순위 (Lv{level:g}) ===")
+    print("각 포켓몬의 최고 가치 역할(타입) + 그 타입 전체 딜러 중 순위. "
+          "상위권일수록 키울 가치 큼.\n")
+    print(f"{'포켓몬':<20}{'역할':<7}{'타입내순위':>12}{'eDPS':>8}  등급")
+    print("-" * 64)
+    for r in res:
+        disp = sid_to_display.get(r["sid"], r["sid"])
+        pct = r["percentile"]
+        if pct <= 5:
+            grade = "★★★ 최우선"
+        elif pct <= 15:
+            grade = "★★ 우선"
+        elif pct <= 35:
+            grade = "★ 쓸만함"
+        else:
+            grade = "— 비주력"
+        rank_str = f"#{r['rank']}/{r['total']}"
+        print(f"{disp:<20}{TYPE_KO.get(r['type'], r['type']):<7}"
+              f"{rank_str:>12}{r['edps']:>8.1f}  {grade}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Pokemon GO PvP 개체값 리그 랭커",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -6099,6 +6482,14 @@ def main():
                          "Best Buddy 활성 시 51 지정)")
     ap.add_argument("--refresh", action="store_true",
                     help="시즌 데이터 강제 재다운로드 (gamemaster + rankings)")
+    ap.add_argument("--attackers", metavar="타입",
+                    help="해당 타입의 범용 PvE 딜러 랭킹 (예: --attackers 불꽃 / fire)")
+    ap.add_argument("--invest", action="store_true",
+                    help="즐겨찾기 포켓몬의 PvE 투자 우선순위 분석")
+    ap.add_argument("--level", type=float, default=40,
+                    help="--attackers/--invest 공격자 레벨 (기본 40)")
+    ap.add_argument("-n", type=int, default=20,
+                    help="--attackers/--invest 표시 개수 (기본 20)")
     args = ap.parse_args()
 
     if args.refresh:
@@ -6109,7 +6500,11 @@ def main():
     gm = load_gamemaster()
     init_leagues(gm)
 
-    if args.cli or args.pokemon:
+    if args.attackers:
+        print_attackers_cli(gm, args.attackers, args.n, args.level)
+    elif args.invest:
+        print_invest_cli(gm, args.n, args.level)
+    elif args.cli or args.pokemon:
         run_cli(args, gm)
     else:
         run_gui(gm)
