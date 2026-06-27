@@ -1033,6 +1033,26 @@ def save_settings(settings):
         print(f"설정 저장 실패: {e}")
 
 
+# 매일/주간 챙겨야 할 루틴 (포고 일일 루틴 — dcinside 정보글 기반)
+# (key, 라벨, 한 줄 설명)
+DAILY_ROUTINE = [
+    ("raid_pass",  "무료 레이드 패스 1장 사용",   "체육관 회전판으로 매일 1장 — 전설 레이드에 쓰면 가성비 최고"),
+    ("research",   "필드 리서치 과제 받기·완료",  "포켓스탑 돌려 과제 수령, 도장 7개 모으면 리서치 돌파(주간)"),
+    ("gifts",      "친구 선물 보내기·열기",        "베프 유지 + 1일 1회 반짝교환(확반) 확정 가능 — 가성비 최고 컨텐츠"),
+    ("buddy",      "버디 하트 채우기",            "산책·먹이·사진 등으로 하트, 메가/베스트버디 진행"),
+    ("gym",        "체육관 점령(8시간 20분+)",     "하루 포켓코인 상한 50개 — 아침에 미리 점령해두기"),
+    ("particles",  "맥스 파티클 수집(파워스팟)",   "일일 상한 800, 맥스배틀용 — 한도 차기 전에 소비"),
+    ("incense",    "데일리 어드벤처 인센스",       "매일 무료 향로, 희귀·지역 포켓몬 조우(가끔 갈라르 새 등)"),
+    ("route",      "루트 걷기",                   "기술머신 노말·지가르데 셀 획득"),
+]
+
+WEEKLY_ROUTINE = [
+    ("adv_sync",     "주간 모험싱크 보상",        "5/25/50km 누적 — 사탕·별의모래·기술머신"),
+    ("breakthrough", "리서치 돌파(도장 7개)",      "주 1회 전설/유용한 보상 — 도장 매일 1개씩 쌓기"),
+    ("spotlight",    "스포트라이트 아워(화 18시)", "특정 종 대량 등장 + 사탕/경험치 보너스 — 사탕벌이 찬스"),
+]
+
+
 MOVE_KO_OVERRIDES = {
     # PokeAPI 한글 번역 누락 보완
     "gigaton-hammer":   "거대망치",
@@ -6346,7 +6366,7 @@ def run_gui(gm):
 
     dash_head = ttk.Frame(dash_tab)
     dash_head.pack(fill="x", pady=(0, 4))
-    ttk.Label(dash_head, text="오늘 할 일 — 레이드·이벤트·알·리서치 요약",
+    ttk.Label(dash_head, text="오늘 할 일 — 루틴 체크리스트 · 레이드·이벤트·알·리서치 요약",
               font=("", 11, "bold")).pack(side="left")
     ttk.Button(dash_head, text="새로고침", width=10,
                command=lambda: _refresh_dashboard()).pack(side="right")
@@ -6387,6 +6407,62 @@ def run_gui(gm):
                 return datetime.fromisoformat((iso or "").replace("Z", "").split(".")[0]) if iso else None
             except Exception:
                 return None
+
+        # ── 일일/주간 루틴 체크리스트 ──
+        today_str = now.strftime("%Y-%m-%d")
+        _iso = now.isocalendar()
+        week_str = f"{_iso[0]}-W{_iso[1]:02d}"
+        r = settings.get("routine") or {}
+        if r.get("date") != today_str:
+            r["date"] = today_str
+            r["daily_done"] = []
+        if r.get("week") != week_str:
+            r["week"] = week_str
+            r["weekly_done"] = []
+        settings["routine"] = r
+        save_settings(settings)
+
+        routine_vars = []  # (scope, key, var)
+        routine_hdr = ttk.Label(dash_body, text="✅ 오늘의 루틴 체크리스트",
+                                font=("", 11, "bold"), foreground="#222")
+        routine_hdr.pack(anchor="w", pady=(6, 2))
+
+        def _routine_progress():
+            n = sum(1 for _s, _k, v in routine_vars if v.get())
+            routine_hdr.config(text=f"✅ 오늘의 루틴 체크리스트 ({n}/{len(routine_vars)})")
+
+        def _toggle_routine(scope, key, var):
+            rr = settings.get("routine") or {}
+            bucket = "daily_done" if scope == "daily" else "weekly_done"
+            d = set(rr.get(bucket, []))
+            if var.get():
+                d.add(key)
+            else:
+                d.discard(key)
+            rr[bucket] = sorted(d)
+            settings["routine"] = rr
+            save_settings(settings)
+            _routine_progress()
+
+        def _routine_item(scope, key, label, note, done_set):
+            var = tk.BooleanVar(value=(key in done_set))
+            row = ttk.Frame(dash_body)
+            row.pack(anchor="w", fill="x", padx=(14, 0))
+            ttk.Checkbutton(row, text=label, variable=var,
+                            command=lambda: _toggle_routine(scope, key, var)).pack(side="left")
+            ttk.Label(row, text=f"— {note}", font=("", 8),
+                      foreground="#999").pack(side="left", padx=(6, 0))
+            routine_vars.append((scope, key, var))
+
+        _daily_done = set(r.get("daily_done", []))
+        _weekly_done = set(r.get("weekly_done", []))
+        for _k, _lbl, _note in DAILY_ROUTINE:
+            _routine_item("daily", _k, _lbl, _note, _daily_done)
+        ttk.Label(dash_body, text="주간", font=("", 9, "bold"),
+                  foreground="#666").pack(anchor="w", padx=(14, 0), pady=(4, 0))
+        for _k, _lbl, _note in WEEKLY_ROUTINE:
+            _routine_item("weekly", _k, _lbl, _note, _weekly_done)
+        _routine_progress()
 
         # ── 이벤트: 진행 중 / 곧 시작 (이번 달) ──
         active, soon = [], []
@@ -6579,6 +6655,21 @@ def print_invest_cli(gm, n, level):
               f"{rank_str:>12}{r['edps']:>8.1f}  {grade}")
 
 
+def print_routine_cli():
+    """--routine: 매일/주간 챙겨야 할 포고 루틴 체크리스트 출력."""
+    print("=== 포켓몬GO 일일 루틴 체크리스트 ===")
+    print("매일 챙기면 좋은 것들 (가성비 높은 순)\n")
+    print("[매일]")
+    for _k, label, note in DAILY_ROUTINE:
+        print(f"  □ {label}")
+        print(f"      └ {note}")
+    print("\n[주간]")
+    for _k, label, note in WEEKLY_ROUTINE:
+        print(f"  □ {label}")
+        print(f"      └ {note}")
+    print("\n(GUI '오늘 할 일' 탭에서는 체크 상태가 저장되고 매일/매주 자동 초기화됩니다.)")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Pokemon GO PvP 개체값 리그 랭커",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -6600,11 +6691,17 @@ def main():
                     help="해당 타입의 범용 PvE 딜러 랭킹 (예: --attackers 불꽃 / fire)")
     ap.add_argument("--invest", action="store_true",
                     help="즐겨찾기 포켓몬의 PvE 투자 우선순위 분석")
+    ap.add_argument("--routine", action="store_true",
+                    help="매일/주간 챙겨야 할 포고 루틴 체크리스트 출력")
     ap.add_argument("--level", type=float, default=40,
                     help="--attackers/--invest 공격자 레벨 (기본 40)")
     ap.add_argument("-n", type=int, default=20,
                     help="--attackers/--invest 표시 개수 (기본 20)")
     args = ap.parse_args()
+
+    if args.routine:
+        print_routine_cli()
+        return
 
     if args.refresh:
         print("=== 데이터 강제 갱신 ===")
