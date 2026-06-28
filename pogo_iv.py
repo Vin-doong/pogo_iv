@@ -6893,14 +6893,14 @@ def run_gui(gm):
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
 
-    # 탭 정렬: 공통 → PvE → PvP
+    # 탭 정렬: PvP → PvE → 공통 (시작 탭 PvP 분석이 맨 앞)
     tab_order = [
-        # 공통 (게임 전반 정보·유틸)
-        dash_tab, type_tab, events_tab, raid_sched_tab, eggs_tab, research_tab,
-        # PvE (레이드·맥스배틀)
-        raid_tab, rkt_tab, invest_tab, maxbox_tab,
         # PvP (고배틀리그)
         iv_tab, compare_tab, meta_tab,
+        # PvE (레이드·맥스배틀)
+        raid_tab, rkt_tab, invest_tab, maxbox_tab,
+        # 공통 (게임 전반 정보·유틸)
+        dash_tab, type_tab, events_tab, raid_sched_tab, eggs_tab, research_tab,
     ]
     for _idx, _t in enumerate(tab_order):
         try:
