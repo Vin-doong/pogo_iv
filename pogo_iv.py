@@ -2656,6 +2656,7 @@ def analyze_cli(gm, ko_base_map, sid_to_display, name, ivs, max_level):
         league, lvl, cp, _, rank, pct, _ = best
         print(f"\n★ 추천: {league} — 베스트 대비 {pct:.2f}%, "
               f"랭크 #{rank}/4096 @ Lv{lvl:g}, CP {cp}")
+    print("\n" + iv_impact_note())
 
 
 def _find_league(name):
@@ -2703,6 +2704,7 @@ def report_best_ivs_per_league(gm, ko_base_map, sid_to_display, name, max_level)
             print("  ".join("-" * w for w in widths))
     print("\n특정 리그의 상위 개체값 목록을 보려면 개체값 대신 리그명을 입력하세요 "
           "(예: 슈퍼리그). 단발 실행은 --league 슈퍼리그 [--top 20]")
+    print("\n" + iv_impact_note())
 
 
 def report_top_ivs_for_league(gm, ko_base_map, sid_to_display, name, lg,
@@ -2738,6 +2740,76 @@ def report_top_ivs_for_league(gm, ko_base_map, sid_to_display, name, lg,
         print("  ".join(_pad(c, w) for c, w in zip(row, widths)))
         if i == 0:
             print("  ".join("-" * w for w in widths))
+    iv0 = ranked[0][0]
+    ex, near = ingame_search_strings(iv0, name=disp)
+    print(f"\n🔍 인게임 검색 — 정확: {ex}\n            근사: {near}")
+
+
+# ── 인게임 검색 문자열 ──
+def ingame_search_strings(iv, name=None):
+    """베스트 IV (공,방,체) → 인게임 검색 문자열 (정확/근사) 튜플.
+    포켓몬 GO 검색 구문: '<범위>공격&<범위>방어&<범위>hp' (범위 예: 0, 14-15)."""
+    a, d, h = iv
+
+    def _rng(v, lo_off, hi_off):
+        lo = max(0, v - lo_off)
+        hi = min(15, v + hi_off)
+        return f"{lo}-{hi}" if lo != hi else f"{lo}"
+
+    prefix = (f"{name}&" if name else "")
+    exact = f"{prefix}{a}공격&{d}방어&{h}hp"
+    # 근사: 공격은 같거나 +1(저공격 선호), 방어/체력은 -1까지 허용 → 베스트 근방
+    near = f"{prefix}{_rng(a, 0, 1)}공격&{_rng(d, 1, 0)}방어&{_rng(h, 1, 0)}hp"
+    return exact, near
+
+
+# 자주 쓰는 인게임 검색어 (참고)
+COMMON_SEARCH_TERMS = [
+    ("100% 개체값", "4*"),
+    ("최악(0%)", "0*"),
+    ("PvP용 저공격", "0-1공격"),
+    ("색이 다른(이로치)", "색이다른"),
+    ("교환 가능", "교환가능"),
+    ("즐겨찾기", "즐겨찾기"),
+    ("강화 가능(사탕XL 불필요)", "1-40"),
+]
+
+
+def iv_impact_note():
+    """개체값이 실제 성능에 미치는 영향 요약 (레이드 vs 마스터리그)."""
+    return (
+        "ℹ️ 개체값 영향도 — 레이드(PvE): IV 1당 약 0.3~0.4%, 300초 기준 ~6초 차로 "
+        "사실상 무의미(100% 개체는 효율보다 감성). 마스터리그: 2% 차가 미러전 승패를 "
+        "가르므로 100% 개체가 중요. 슈퍼/하이퍼리그: 'CP 상한 내 스탯곱'이 핵심이라 "
+        "저공격(예: 0/15/15)이 자주 1위."
+    )
+
+
+# ── 합체/변신 에너지 ──
+FUSION_ENERGY_BASE = 80          # 1회 보상 기본 에너지
+FUSION_ENERGY_PER_DROP = 10      # 에너지 당첨 꾸러미 1개당
+FUSION_ENERGY_DROP_RATE = 0.25   # 꾸러미가 에너지일 확률
+FUSION_GOAL_DEFAULT = 1000       # 합체/변신 1회 제작에 필요한 에너지
+# (비스트볼/파워스폿 처치 보상 꾸러미 → 기대 에너지) — dcinside 정보글 #72554
+FUSION_BEASTBALL_TABLE = [
+    ("8~10",  "7~8", "약 97~100"),
+    ("11~13", "9",   "약 102"),
+    ("14~15", "10",  "약 105"),
+    ("16~17", "11",  "약 107"),
+]
+
+
+def fusion_expected_energy(bundles):
+    """보상 꾸러미 수 → 기대 합체 에너지. 공식: 80 + 10×(꾸러미×0.25)."""
+    return FUSION_ENERGY_BASE + FUSION_ENERGY_PER_DROP * (bundles * FUSION_ENERGY_DROP_RATE)
+
+
+def boss_weaknesses(types):
+    """방어 타입 리스트 → 약점(배수>1) 공격타입 리스트 (배수 큰 순)."""
+    eff = type_effectiveness([t for t in types if t])
+    weak = [(atk, m) for atk, m in eff.items() if m > 1.0]
+    weak.sort(key=lambda x: -x[1])
+    return weak
 
 
 def parse_ivs(s):
@@ -3337,6 +3409,9 @@ def run_gui(gm):
     summary_tree.column("cost", anchor="w")
     summary_tree.pack(fill="x")
 
+    ttk.Label(iv_tab, text=iv_impact_note(), font=("", 8), foreground="#888",
+              wraplength=980, justify="left").pack(anchor="w", pady=(3, 0))
+
     # 아래 영역: Top 100 (좌) + 기술&점수 (우) 한 화면
     content_split = ttk.Frame(iv_tab)
     content_split.pack(fill="both", expand=True)
@@ -3348,6 +3423,22 @@ def run_gui(gm):
     table_label = tk.StringVar(value="")
     ttk.Label(iv_col, textvariable=table_label, font=("", 9),
               foreground="#555").pack(anchor="w", pady=(0, 4))
+
+    # 인게임 검색 문자열 (현재 리그 베스트 IV 기준) — 복사해서 게임에 붙여넣기
+    search_str_var = tk.StringVar(value="")
+    search_row = ttk.Frame(iv_col)
+    search_row.pack(fill="x", pady=(0, 4))
+    ttk.Label(search_row, text="🔍 검색", font=("", 9, "bold"),
+              foreground="#2a5a8a").pack(side="left")
+    ttk.Entry(search_row, textvariable=search_str_var, state="readonly"
+              ).pack(side="left", fill="x", expand=True, padx=(6, 4))
+
+    def _copy_search():
+        s = search_str_var.get()
+        if s:
+            root.clipboard_clear()
+            root.clipboard_append(s)
+    ttk.Button(search_row, text="복사", width=6, command=_copy_search).pack(side="left")
 
     tree_frame = ttk.Frame(iv_col)
     tree_frame.pack(fill="both", expand=True)
@@ -6067,6 +6158,7 @@ def run_gui(gm):
             fav_btn_var.set("☆ 즐겨찾기")
             table_label.set("")
             my_iv_result.set("")
+            search_str_var.set("")
             for r in tree.get_children():
                 tree.delete(r)
             for r in summary_tree.get_children():
@@ -6214,6 +6306,11 @@ def run_gui(gm):
 
         # My IV short summary line
         cm = metrics.get(current_league)
+        if cm and cm.get("top_iv"):
+            _ex, _ = ingame_search_strings(cm["top_iv"], name=disp)
+            search_str_var.set(_ex)
+        else:
+            search_str_var.set("")
         if user_iv is None:
             my_iv_result.set("· 입력하면 리그별 내 순위가 계산됩니다")
         else:
@@ -6576,6 +6673,43 @@ def run_gui(gm):
                   f"할인율 {disc:.0f}%  (가치비 {ratio:.2f}배)  →  {verdict}"),
             foreground=col)
 
+    # --- ⚛️ 합체/변신 에너지 계산기 ---
+    ttk.Label(box_section, text="⚛️ 합체/변신 에너지 계산기", font=("", 11, "bold"),
+              foreground="#222").pack(anchor="w", pady=(16, 2))
+    ttk.Label(box_section,
+              text=f"네크로즈마·큐레무·버드렉스 등. 공식: 80 + 10×(에너지 당첨 꾸러미). "
+                   f"합체 1회 ≈ {FUSION_GOAL_DEFAULT} 에너지.",
+              font=("", 8), foreground="#999").pack(anchor="w", padx=(14, 0), pady=(0, 4))
+    ff = ttk.Frame(box_section)
+    ff.pack(anchor="w", padx=(14, 0), pady=(2, 2))
+    ttk.Label(ff, text="보상 꾸러미 수: ").pack(side="left")
+    fusion_bundles_var = tk.StringVar(value="")
+    ttk.Entry(ff, textvariable=fusion_bundles_var, width=8).pack(side="left")
+    ttk.Label(ff, text="   목표 에너지: ").pack(side="left")
+    fusion_goal_var = tk.StringVar(value=str(FUSION_GOAL_DEFAULT))
+    ttk.Entry(ff, textvariable=fusion_goal_var, width=8).pack(side="left")
+    ttk.Button(ff, text="계산", command=lambda: _calc_fusion()).pack(side="left", padx=8)
+    fusion_result = ttk.Label(box_section, text="", font=("", 10), justify="left")
+    fusion_result.pack(anchor="w", padx=(14, 0), pady=(2, 0))
+
+    def _calc_fusion():
+        try:
+            b = float(fusion_bundles_var.get() or 0)
+        except ValueError:
+            b = 0
+        try:
+            goal = float(fusion_goal_var.get() or FUSION_GOAL_DEFAULT)
+        except ValueError:
+            goal = FUSION_GOAL_DEFAULT
+        if b <= 0:
+            fusion_result.config(text="보상 꾸러미 수를 입력하세요.", foreground="#999")
+            return
+        e = fusion_expected_energy(b)
+        runs = max(1, int(round(goal / e))) if e > 0 else 0
+        fusion_result.config(
+            text=f"회당 기대 에너지 ~{e:.0f}  →  목표 {goal:.0f} 까지 약 {runs}회",
+            foreground="#2a7a3a")
+
     def _refresh_dashboard():
         for w in dash_summary.winfo_children():
             w.destroy()
@@ -6694,6 +6828,41 @@ def run_gui(gm):
                       for t in (b.get("types", []) or [])]
             tstr = " · ".join(TYPE_KO.get(n.lower(), n) for n in tnames if n)
             line(f"• [{tier_ko}] {ko}    {tstr}")
+
+        # ── 즐겨찾기로 잡는 주목 레이드 (상성 후보) ──
+        section("🎯 내 즐겨찾기로 잡는 주목 레이드 (상성 후보)")
+        if not favorites:
+            line("즐겨찾기가 비어 있음 — 좌측에서 ★로 보유 포켓몬을 등록하면 표시", "#999")
+        elif not hi:
+            line("표시할 레이드 없음", "#999")
+        else:
+            def _types_of(obj):
+                out = []
+                for t in (obj.get("types", []) or []):
+                    n = (t.get("name") if isinstance(t, dict) else t) or ""
+                    n = n.lower()
+                    if n and n != "none":
+                        out.append(n)
+                return out
+            fav_info = []
+            for fsid in favorites:
+                fp = sid_to_pokemon.get(fsid)
+                if fp:
+                    fav_info.append((sid_to_display.get(fsid, fsid), set(_types_of(fp))))
+            shown = 0
+            for b in hi[:16]:
+                weak = {atk for atk, _m in boss_weaknesses(_types_of(b))}
+                if not weak:
+                    continue
+                matches = [disp for disp, fts in fav_info if fts & weak]
+                if matches:
+                    ko = b.get("_name_ko") or _en_to_display(b.get("name", "?"))
+                    extra = f" 외 {len(matches) - 6}" if len(matches) > 6 else ""
+                    line(f"• {ko} → {', '.join(matches[:6])}{extra}", "#2a7a3a")
+                    shown += 1
+            if shown == 0:
+                line("현재 주목 레이드에 상성 맞는 즐겨찾기가 없음 "
+                     "(타입 상성 기준 후보 — 무브셋은 별도 확인)", "#999")
 
         # ── 알 / 리서치 요약 ──
         eggs = eggs_state.get("data", []) or []
@@ -6888,6 +7057,53 @@ def print_maxtier_cli():
         print(f"  {name:<10} {why}")
 
 
+def print_search_cli(gm, name, league=None, max_level=DEFAULT_MAX_LEVEL):
+    """--search: 베스트 개체값 인게임 검색 문자열 출력."""
+    dex_to_ko = load_korean_dex_map()
+    ko_base_map = build_ko_base_map(gm, dex_to_ko)
+    sid_to_display = {sid: disp for disp, sid in build_display_entries(gm, dex_to_ko)}
+    p, alts = find_pokemon_cli(gm, ko_base_map, name)
+    if not p:
+        print(f"'{name}' — 찾을 수 없음.")
+        return
+    base = p["baseStats"]
+    disp = sid_to_display.get(p["speciesId"], p.get("speciesName", name))
+    max_idx = min(int(round((max_level - 1.0) * 2)), len(CPM) - 1)
+    print(f"=== {disp} — 베스트 개체값 인게임 검색 문자열 ===\n")
+    lgs = [_find_league(league)] if league else list(LEAGUES)
+    for lg in lgs:
+        if not lg:
+            print(f"리그를 찾을 수 없음: {league}")
+            return
+        ranked = rank_all(base, lg.cap, max_idx)
+        if not ranked or ranked[0][1] == 0:
+            continue
+        iv = ranked[0][0]
+        ex, near = ingame_search_strings(iv, name=disp)
+        print(f"[{lg.name}]  베스트 {iv[0]}/{iv[1]}/{iv[2]}")
+        print(f"   정확: {ex}")
+        print(f"   근사: {near}")
+    print("\n자주 쓰는 검색어:")
+    for label, term in COMMON_SEARCH_TERMS:
+        print(f"   {label:<22} {term}")
+
+
+def print_fusion_cli(bundles=None, goal=FUSION_GOAL_DEFAULT):
+    """--fusion: 합체/변신 에너지 공식·표 + (선택) 기대 에너지 추정."""
+    print("=== 합체/변신 에너지 계산 (네크로즈마·큐레무·버드렉스 등) ===")
+    print(f"공식: 1회 보상 에너지 = {FUSION_ENERGY_BASE} + {FUSION_ENERGY_PER_DROP}×(에너지 당첨 꾸러미 수)")
+    print(f"      에너지 당첨 확률 ≈ {FUSION_ENERGY_DROP_RATE:.0%}, 합체 1회 제작 ≈ {goal} 에너지\n")
+    print(f"{'비스트볼':<8}{'보상 꾸러미':<12}{'기대 에너지':<12}")
+    print("-" * 32)
+    for balls, bundle, energy in FUSION_BEASTBALL_TABLE:
+        print(f"{balls:<10}{bundle:<14}{energy}")
+    if bundles is not None:
+        e = fusion_expected_energy(bundles)
+        runs = max(1, int(round(goal / e)))
+        print(f"\n보상 꾸러미 {bundles}개 → 기대 에너지 약 {e:.0f}")
+        print(f"목표 {goal} 달성까지 약 {runs}회 필요 (회당 ~{e:.0f})")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Pokemon GO PvP 개체값 리그 랭커",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -6913,6 +7129,10 @@ def main():
                     help="매일/주간 챙겨야 할 포고 루틴 체크리스트 출력")
     ap.add_argument("--maxtier", action="store_true",
                     help="다이맥스/거다이맥스 배틀 추천 티어 출력")
+    ap.add_argument("--search", metavar="포켓몬",
+                    help="베스트 개체값 인게임 검색 문자열 생성 (--league 로 리그 한정 가능)")
+    ap.add_argument("--fusion", nargs="?", const=-1, type=int, metavar="꾸러미수",
+                    help="합체/변신 에너지 공식·표 출력 (보상 꾸러미 수를 주면 기대 에너지 추정)")
     ap.add_argument("--level", type=float, default=40,
                     help="--attackers/--invest 공격자 레벨 (기본 40)")
     ap.add_argument("-n", type=int, default=20,
@@ -6927,6 +7147,10 @@ def main():
         print_maxtier_cli()
         return
 
+    if args.fusion is not None:
+        print_fusion_cli(None if args.fusion == -1 else args.fusion)
+        return
+
     if args.refresh:
         print("=== 데이터 강제 갱신 ===")
         refresh_all_data()
@@ -6935,7 +7159,9 @@ def main():
     gm = load_gamemaster()
     init_leagues(gm)
 
-    if args.attackers:
+    if args.search:
+        print_search_cli(gm, args.search, league=args.league, max_level=args.max_level)
+    elif args.attackers:
         print_attackers_cli(gm, args.attackers, args.n, args.level)
     elif args.invest:
         print_invest_cli(gm, args.n, args.level)
