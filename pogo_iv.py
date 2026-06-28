@@ -6424,25 +6424,12 @@ def run_gui(gm):
         root.bind(f"<Alt-Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
     root.bind("<Control-r>", lambda e: do_data_refresh())
 
-    # ===== 다맥 티어 · 박스 효율 탭 =====
+    # ===== PvE 다맥 티어 탭 =====
     maxbox_tab = ttk.Frame(notebook, padding=(10, 8))
-    notebook.add(maxbox_tab, text="  다맥·박스  ")
+    notebook.add(maxbox_tab, text="  PvE 다맥  ")
 
-    mb_head = ttk.Frame(maxbox_tab)
-    mb_head.pack(fill="x", pady=(0, 6))
-    mb_mode = tk.StringVar(value="tier")
-    ttk.Radiobutton(mb_head, text="다맥 티어", variable=mb_mode, value="tier",
-                    command=lambda: _mb_switch()).pack(side="left")
-    ttk.Radiobutton(mb_head, text="박스 효율 계산기", variable=mb_mode, value="box",
-                    command=lambda: _mb_switch()).pack(side="left", padx=(10, 0))
-
-    mb_body = ttk.Frame(maxbox_tab)
-    mb_body.pack(fill="both", expand=True)
-
-    # --- 다맥 티어 (스크롤) ---
-    tier_frame = ttk.Frame(mb_body)
-    tcanvas = tk.Canvas(tier_frame, highlightthickness=0)
-    tvsb = ttk.Scrollbar(tier_frame, orient="vertical", command=tcanvas.yview)
+    tcanvas = tk.Canvas(maxbox_tab, highlightthickness=0)
+    tvsb = ttk.Scrollbar(maxbox_tab, orient="vertical", command=tcanvas.yview)
     tcanvas.configure(yscrollcommand=tvsb.set)
     tvsb.pack(side="right", fill="y")
     tcanvas.pack(side="left", fill="both", expand=True)
@@ -6479,16 +6466,51 @@ def run_gui(gm):
     for _nm, _why in MAXBATTLE_HEALERS:
         _tline(f"{_nm}  —  {_why}")
 
-    # --- 박스 효율 계산기 ---
-    box_frame = ttk.Frame(mb_body)
-    ttk.Label(box_frame,
-              text="박스 효율 계산기 — 박스 가격과 구성품 개수를 넣으면 단품 대비 가치·할인율 계산",
-              font=("", 9), foreground="#666").pack(anchor="w", pady=(2, 6))
-    ttk.Label(box_frame,
-              text="단품가는 참고 기본값(세일·시즌 변동) — 필요하면 직접 수정하세요.",
-              font=("", 8), foreground="#999").pack(anchor="w", pady=(0, 6))
-    bgrid = ttk.Frame(box_frame)
-    bgrid.pack(anchor="w", fill="x")
+    # ===== 오늘 할 일 대시보드 (레이드·이벤트·알·리서치 한눈에) =====
+    # 모든 일정 state 가 만들어진 뒤(여기) 구성 → notebook.insert 로 일정 그룹 앞으로 이동
+    dash_tab = ttk.Frame(notebook, padding=(10, 8))
+    notebook.add(dash_tab, text="  오늘 할 일  ")
+
+    dash_head = ttk.Frame(dash_tab)
+    dash_head.pack(fill="x", pady=(0, 4))
+    ttk.Label(dash_head, text="오늘 할 일 — 루틴 체크리스트 · 레이드·이벤트·알·리서치 요약",
+              font=("", 11, "bold")).pack(side="left")
+    ttk.Button(dash_head, text="새로고침", width=10,
+               command=lambda: _refresh_dashboard()).pack(side="right")
+
+    # 스크롤 가능한 본문
+    dash_canvas = tk.Canvas(dash_tab, highlightthickness=0)
+    dash_vsb = ttk.Scrollbar(dash_tab, orient="vertical", command=dash_canvas.yview)
+    dash_canvas.configure(yscrollcommand=dash_vsb.set)
+    dash_vsb.pack(side="right", fill="y")
+    dash_canvas.pack(side="left", fill="both", expand=True)
+    dash_body = ttk.Frame(dash_canvas)
+    dash_win = dash_canvas.create_window((0, 0), window=dash_body, anchor="nw")
+    dash_body.bind("<Configure>",
+                   lambda e: dash_canvas.configure(scrollregion=dash_canvas.bbox("all")))
+    dash_canvas.bind("<Configure>",
+                     lambda e: dash_canvas.itemconfigure(dash_win, width=e.width))
+
+    def _dash_wheel(e):
+        dash_canvas.yview_scroll(int(-(e.delta or 0) / 120), "units")
+    dash_canvas.bind("<Enter>", lambda e: dash_canvas.bind_all("<MouseWheel>", _dash_wheel))
+    dash_canvas.bind("<Leave>", lambda e: dash_canvas.unbind_all("<MouseWheel>"))
+
+    # 새로고침 때 갈아끼우는 요약부(dash_summary) + 항상 유지되는 박스 계산기부(box_section)
+    dash_summary = ttk.Frame(dash_body)
+    dash_summary.pack(fill="x", anchor="w")
+    box_section = ttk.Frame(dash_body)
+    box_section.pack(fill="x", anchor="w", pady=(12, 0))
+
+    # --- 🛒 박스 효율 계산기 (입력값 유지) ---
+    ttk.Label(box_section, text="🛒 박스 효율 계산기", font=("", 11, "bold"),
+              foreground="#222").pack(anchor="w", pady=(6, 2))
+    ttk.Label(box_section,
+              text="박스 가격과 구성품 개수를 넣으면 단품 대비 가치·할인율을 계산. "
+                   "단품가는 참고 기본값(세일·시즌 변동) — 직접 수정 가능.",
+              font=("", 8), foreground="#999").pack(anchor="w", padx=(14, 0), pady=(0, 4))
+    bgrid = ttk.Frame(box_section)
+    bgrid.pack(anchor="w", fill="x", padx=(14, 0))
     ttk.Label(bgrid, text="아이템", width=16, font=("", 9, "bold")).grid(row=0, column=0, sticky="w")
     ttk.Label(bgrid, text="단품가(코인)", font=("", 9, "bold")).grid(row=0, column=1, padx=6)
     ttk.Label(bgrid, text="개수", font=("", 9, "bold")).grid(row=0, column=2, padx=6)
@@ -6500,14 +6522,14 @@ def run_gui(gm):
         ttk.Entry(bgrid, textvariable=_pv, width=8).grid(row=_i, column=1, padx=6, pady=1)
         ttk.Entry(bgrid, textvariable=_qv, width=6).grid(row=_i, column=2, padx=6, pady=1)
         box_rows.append((_name, _pv, _qv))
-    pf = ttk.Frame(box_frame)
-    pf.pack(anchor="w", pady=(8, 4))
+    pf = ttk.Frame(box_section)
+    pf.pack(anchor="w", pady=(8, 4), padx=(14, 0))
     ttk.Label(pf, text="박스 가격(코인): ").pack(side="left")
     box_price_var = tk.StringVar(value="")
     ttk.Entry(pf, textvariable=box_price_var, width=10).pack(side="left")
     ttk.Button(pf, text="계산", command=lambda: _calc_box()).pack(side="left", padx=8)
-    box_result = ttk.Label(box_frame, text="", font=("", 10), justify="left")
-    box_result.pack(anchor="w", pady=(6, 0))
+    box_result = ttk.Label(box_section, text="", font=("", 10), justify="left")
+    box_result.pack(anchor="w", pady=(6, 0), padx=(14, 0))
 
     def _calc_box():
         total = 0.0
@@ -6542,56 +6564,17 @@ def run_gui(gm):
                   f"할인율 {disc:.0f}%  (가치비 {ratio:.2f}배)  →  {verdict}"),
             foreground=col)
 
-    def _mb_switch():
-        if mb_mode.get() == "box":
-            tier_frame.pack_forget()
-            box_frame.pack(fill="both", expand=True)
-        else:
-            box_frame.pack_forget()
-            tier_frame.pack(fill="both", expand=True)
-    tier_frame.pack(fill="both", expand=True)
-
-    # ===== 오늘 할 일 대시보드 (레이드·이벤트·알·리서치 한눈에) =====
-    # 모든 일정 state 가 만들어진 뒤(여기) 구성 → notebook.insert 로 일정 그룹 앞으로 이동
-    dash_tab = ttk.Frame(notebook, padding=(10, 8))
-    notebook.add(dash_tab, text="  오늘 할 일  ")
-
-    dash_head = ttk.Frame(dash_tab)
-    dash_head.pack(fill="x", pady=(0, 4))
-    ttk.Label(dash_head, text="오늘 할 일 — 루틴 체크리스트 · 레이드·이벤트·알·리서치 요약",
-              font=("", 11, "bold")).pack(side="left")
-    ttk.Button(dash_head, text="새로고침", width=10,
-               command=lambda: _refresh_dashboard()).pack(side="right")
-
-    # 스크롤 가능한 본문
-    dash_canvas = tk.Canvas(dash_tab, highlightthickness=0)
-    dash_vsb = ttk.Scrollbar(dash_tab, orient="vertical", command=dash_canvas.yview)
-    dash_canvas.configure(yscrollcommand=dash_vsb.set)
-    dash_vsb.pack(side="right", fill="y")
-    dash_canvas.pack(side="left", fill="both", expand=True)
-    dash_body = ttk.Frame(dash_canvas)
-    dash_win = dash_canvas.create_window((0, 0), window=dash_body, anchor="nw")
-    dash_body.bind("<Configure>",
-                   lambda e: dash_canvas.configure(scrollregion=dash_canvas.bbox("all")))
-    dash_canvas.bind("<Configure>",
-                     lambda e: dash_canvas.itemconfigure(dash_win, width=e.width))
-
-    def _dash_wheel(e):
-        dash_canvas.yview_scroll(int(-(e.delta or 0) / 120), "units")
-    dash_canvas.bind("<Enter>", lambda e: dash_canvas.bind_all("<MouseWheel>", _dash_wheel))
-    dash_canvas.bind("<Leave>", lambda e: dash_canvas.unbind_all("<MouseWheel>"))
-
     def _refresh_dashboard():
-        for w in dash_body.winfo_children():
+        for w in dash_summary.winfo_children():
             w.destroy()
         now = datetime.now()
 
         def section(title):
-            ttk.Label(dash_body, text=title, font=("", 11, "bold"),
+            ttk.Label(dash_summary, text=title, font=("", 11, "bold"),
                       foreground="#222").pack(anchor="w", pady=(12, 2))
 
         def line(txt, color="#333"):
-            ttk.Label(dash_body, text=txt, font=("", 9),
+            ttk.Label(dash_summary, text=txt, font=("", 9),
                       foreground=color).pack(anchor="w", padx=(14, 0))
 
         def _pdt(iso):
@@ -6615,7 +6598,7 @@ def run_gui(gm):
         save_settings(settings)
 
         routine_vars = []  # (scope, key, var)
-        routine_hdr = ttk.Label(dash_body, text="✅ 오늘의 루틴 체크리스트",
+        routine_hdr = ttk.Label(dash_summary, text="✅ 오늘의 루틴 체크리스트",
                                 font=("", 11, "bold"), foreground="#222")
         routine_hdr.pack(anchor="w", pady=(6, 2))
 
@@ -6638,7 +6621,7 @@ def run_gui(gm):
 
         def _routine_item(scope, key, label, note, done_set):
             var = tk.BooleanVar(value=(key in done_set))
-            row = ttk.Frame(dash_body)
+            row = ttk.Frame(dash_summary)
             row.pack(anchor="w", fill="x", padx=(14, 0))
             ttk.Checkbutton(row, text=label, variable=var,
                             command=lambda: _toggle_routine(scope, key, var)).pack(side="left")
@@ -6650,7 +6633,7 @@ def run_gui(gm):
         _weekly_done = set(r.get("weekly_done", []))
         for _k, _lbl, _note in DAILY_ROUTINE:
             _routine_item("daily", _k, _lbl, _note, _daily_done)
-        ttk.Label(dash_body, text="주간", font=("", 9, "bold"),
+        ttk.Label(dash_summary, text="주간", font=("", 9, "bold"),
                   foreground="#666").pack(anchor="w", padx=(14, 0), pady=(4, 0))
         for _k, _lbl, _note in WEEKLY_ROUTINE:
             _routine_item("weekly", _k, _lbl, _note, _weekly_done)
@@ -6708,7 +6691,7 @@ def run_gui(gm):
         line(f"부화 풀 {len(eggs)}종 (색이 다른 포켓몬 {shiny_eggs}종) — 자세히는 '알 부화' 탭")
         line(f"필드 리서치 과제 {len(res)}건 — 자세히는 '리서치' 탭")
 
-        ttk.Label(dash_body, text=f"갱신: {now:%Y-%m-%d %H:%M}",
+        ttk.Label(dash_summary, text=f"갱신: {now:%Y-%m-%d %H:%M}",
                   font=("", 8), foreground="#999").pack(anchor="w", pady=(14, 0))
 
     _refresh_dashboard()
@@ -6729,9 +6712,23 @@ def run_gui(gm):
             pass
     notebook.bind("<<NotebookTabChanged>>", _on_tab_changed)
 
-    # 대시보드를 일정 그룹(레이드 일정) 앞으로 이동
+    # 탭 정렬: 공통 → PvE → PvP
+    tab_order = [
+        # 공통 (게임 전반 정보·유틸)
+        dash_tab, type_tab, events_tab, raid_sched_tab, eggs_tab, research_tab,
+        # PvE (레이드·맥스배틀)
+        raid_tab, rkt_tab, invest_tab, maxbox_tab,
+        # PvP (고배틀리그)
+        iv_tab, compare_tab, meta_tab,
+    ]
+    for _idx, _t in enumerate(tab_order):
+        try:
+            notebook.insert(_idx, _t)
+        except Exception:
+            pass
+    # 시작 시 PvP 분석(좌측 종 리스트가 구동하는 핵심 탭)에 포커스
     try:
-        notebook.insert(6, dash_tab)
+        notebook.select(iv_tab)
     except Exception:
         pass
 
