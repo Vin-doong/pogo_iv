@@ -1053,6 +1053,71 @@ WEEKLY_ROUTINE = [
 ]
 
 
+# ── 다이맥스/거다이맥스 배틀 티어 (참고용) ──
+# 맥스배틀은 일반 레이드와 역학이 달라(맥스무브 레벨·역할 분담) 별도 큐레이션.
+# 출처: GO Hub / doctorpokegogo 2026 가이드. 메타 변동 시 이 표만 갱신하면 됨.
+MAXBATTLE_UPDATED = "2026-07"
+# (타입, 추천 어택커, 맥스무브)
+MAXBATTLE_ATTACKERS_BY_TYPE = [
+    ("노말",   "거다이맥스 잠만보",   "G-Max 리플레니쉬"),
+    ("불꽃",   "거다이맥스 에이스번", "G-Max 파이어볼"),
+    ("물",     "거다이맥스 인텔리온", "G-Max 하이드로스나이프"),
+    ("전기",   "거다이맥스 스트린더", "G-Max 스턴쇼크"),
+    ("풀",     "거다이맥스 고릴타",   "G-Max 드럼솔로"),
+    ("얼음",   "글레이시아",          "맥스 헤일스톰"),
+    ("격투",   "거다이맥스 괴력몬",   "G-Max 치스트라이크"),
+    ("독",     "거다이맥스 더스트나", "G-Max 말로더"),
+    ("땅",     "두더류",              "맥스 퀘이크"),
+    ("비행",   "파이어",              "맥스 에어스트림"),
+    ("에스퍼", "후딘",                "맥스 마인드스톰"),
+    ("벌레",   "거다이맥스 버터플",   "G-Max 비퍼들"),
+    ("바위",   "기가이아스",          "맥스 록폴"),
+    ("고스트", "거다이맥스 팬텀",     "G-Max 테러"),
+    ("드래곤", "무한다이노",          "맥스 웜윈드"),
+    ("악",     "거다이맥스 오롱털",   "G-Max 스누즈"),
+    ("강철",   "자시안(검의 왕)",     "맥스 스틸스파이크"),
+    ("페어리", "가디안 / 마휘핑",     "맥스 스타폴"),
+]
+# 최우선 S급 어택커 (보스가 약점이면 거다이맥스가 항상 최우선)
+MAXBATTLE_S_ATTACKERS = [
+    "거다이맥스 인텔리온", "거다이맥스 팬텀", "거다이맥스 킹크랩",
+    "거다이맥스 고릴타", "거다이맥스 에이스번", "거다이맥스 괴력몬",
+    "자시안(검의 왕)", "무한다이노",
+]
+# 탱커 (0.5초 평타로 게이지 빠르게 — 변신 빠르고 덜 맞음)
+MAXBATTLE_TANKS = [
+    ("해피너스",            "들이받기(0.5초)", "게임 내 최대 HP + 가장 빠른 게이지 — 만능 탱커"),
+    ("자마젠타(방패의 왕)", "메탈클로(0.5초)", "내구+강철, 시작 시 실드 부여"),
+    ("거다이맥스 잠만보",   "핥기(0.5초)",     "막대한 내구 + 팀 회복 유틸(G-Max 리플레니쉬)"),
+    ("라티아스",            "용의숨결(0.5초)", "드래곤 보스 상대 무난한 내구"),
+    ("메타그로스",          "탄환펀치(0.5초)", "강철 내구 + 범용"),
+    ("거다이맥스 라프라스", "어는바람(0.5초)", "물/얼음 내구 탱커"),
+    ("아머까오",            "에어슬래시",      "비행/강철 내구 + 자체 실드"),
+    ("샤미드",              "물기(0.5초)",     "물 보스 외 무난한 HP 탱커"),
+]
+# 힐러 (높은 HP로 맥스 스피릿 회복량 극대화)
+MAXBATTLE_HEALERS = [
+    ("해피너스", "압도적 1순위 — 최대 HP로 회복량/생존 모두 최고"),
+    ("럭키",     "해피너스 대용(HP 높음)"),
+    ("라프라스", "내구형 힐러 겸 물 어택"),
+    ("잠만보",   "높은 HP, 힐+탱 겸용"),
+    ("푸크린",   "값싼 HP 힐러 대용"),
+]
+
+# ── 포켓몬샵 박스 효율 — 아이템 코인 기준가 (단품 환산, 참고용) ──
+# 세일/지역/시즌에 따라 변동. GUI 에서 편집 가능, 박스 가격 대비 할인율 계산용.
+SHOP_ITEM_PRICES = [
+    ("프리미엄 배틀패스", 100),
+    ("원격 레이드 패스",  100),
+    ("행운의 알",         80),
+    ("별의 조각",         80),
+    ("향로",              80),
+    ("일반 부화장치",     150),
+    ("슈퍼 부화장치",     200),
+    ("로켓 레이더",       200),
+]
+
+
 MOVE_KO_OVERRIDES = {
     # PokeAPI 한글 번역 누락 보완
     "gigaton-hammer":   "거대망치",
@@ -6359,6 +6424,133 @@ def run_gui(gm):
         root.bind(f"<Alt-Key-{i}>", lambda e, idx=i-1: _switch_league(idx, e))
     root.bind("<Control-r>", lambda e: do_data_refresh())
 
+    # ===== 다맥 티어 · 박스 효율 탭 =====
+    maxbox_tab = ttk.Frame(notebook, padding=(10, 8))
+    notebook.add(maxbox_tab, text="  다맥·박스  ")
+
+    mb_head = ttk.Frame(maxbox_tab)
+    mb_head.pack(fill="x", pady=(0, 6))
+    mb_mode = tk.StringVar(value="tier")
+    ttk.Radiobutton(mb_head, text="다맥 티어", variable=mb_mode, value="tier",
+                    command=lambda: _mb_switch()).pack(side="left")
+    ttk.Radiobutton(mb_head, text="박스 효율 계산기", variable=mb_mode, value="box",
+                    command=lambda: _mb_switch()).pack(side="left", padx=(10, 0))
+
+    mb_body = ttk.Frame(maxbox_tab)
+    mb_body.pack(fill="both", expand=True)
+
+    # --- 다맥 티어 (스크롤) ---
+    tier_frame = ttk.Frame(mb_body)
+    tcanvas = tk.Canvas(tier_frame, highlightthickness=0)
+    tvsb = ttk.Scrollbar(tier_frame, orient="vertical", command=tcanvas.yview)
+    tcanvas.configure(yscrollcommand=tvsb.set)
+    tvsb.pack(side="right", fill="y")
+    tcanvas.pack(side="left", fill="both", expand=True)
+    tbody = ttk.Frame(tcanvas)
+    twin = tcanvas.create_window((0, 0), window=tbody, anchor="nw")
+    tbody.bind("<Configure>", lambda e: tcanvas.configure(scrollregion=tcanvas.bbox("all")))
+    tcanvas.bind("<Configure>", lambda e: tcanvas.itemconfigure(twin, width=e.width))
+
+    def _tier_wheel(e):
+        tcanvas.yview_scroll(int(-(e.delta or 0) / 120), "units")
+    tcanvas.bind("<Enter>", lambda e: tcanvas.bind_all("<MouseWheel>", _tier_wheel))
+    tcanvas.bind("<Leave>", lambda e: tcanvas.unbind_all("<MouseWheel>"))
+
+    def _tsec(t):
+        ttk.Label(tbody, text=t, font=("", 11, "bold"),
+                  foreground="#222").pack(anchor="w", pady=(12, 2))
+
+    def _tline(t, c="#333"):
+        ttk.Label(tbody, text=t, font=("", 9),
+                  foreground=c).pack(anchor="w", padx=(14, 0))
+
+    _tline(f"맥스배틀 추천 (참고용 · {MAXBATTLE_UPDATED} 기준 · 출처 GO Hub/doctorpokegogo)", "#999")
+    _tsec("⭐ 최우선 S급 어택커")
+    _tline("  ·  ".join(MAXBATTLE_S_ATTACKERS), "#2a5a8a")
+    _tline("보스가 약점이면 거다이맥스가 항상 1순위. 소수만 키운다면 "
+           "자시안(강철)·무한다이노(드래곤)·거다이맥스 팬텀(고스트)부터.", "#666")
+    _tsec("⚔️ 타입별 추천 어택커")
+    for _ty, _nm, _mv in MAXBATTLE_ATTACKERS_BY_TYPE:
+        _tline(f"[{_ty}] {_nm}  —  {_mv}")
+    _tsec("🛡️ 탱커 (0.5초 평타 = 변신 빠름 = 덜 맞음)")
+    for _nm, _mv, _why in MAXBATTLE_TANKS:
+        _tline(f"{_nm}  ({_mv})  —  {_why}")
+    _tsec("➕ 힐러 (높은 HP → 회복량 ↑)")
+    for _nm, _why in MAXBATTLE_HEALERS:
+        _tline(f"{_nm}  —  {_why}")
+
+    # --- 박스 효율 계산기 ---
+    box_frame = ttk.Frame(mb_body)
+    ttk.Label(box_frame,
+              text="박스 효율 계산기 — 박스 가격과 구성품 개수를 넣으면 단품 대비 가치·할인율 계산",
+              font=("", 9), foreground="#666").pack(anchor="w", pady=(2, 6))
+    ttk.Label(box_frame,
+              text="단품가는 참고 기본값(세일·시즌 변동) — 필요하면 직접 수정하세요.",
+              font=("", 8), foreground="#999").pack(anchor="w", pady=(0, 6))
+    bgrid = ttk.Frame(box_frame)
+    bgrid.pack(anchor="w", fill="x")
+    ttk.Label(bgrid, text="아이템", width=16, font=("", 9, "bold")).grid(row=0, column=0, sticky="w")
+    ttk.Label(bgrid, text="단품가(코인)", font=("", 9, "bold")).grid(row=0, column=1, padx=6)
+    ttk.Label(bgrid, text="개수", font=("", 9, "bold")).grid(row=0, column=2, padx=6)
+    box_rows = []
+    for _i, (_name, _price) in enumerate(SHOP_ITEM_PRICES, 1):
+        ttk.Label(bgrid, text=_name, width=16).grid(row=_i, column=0, sticky="w")
+        _pv = tk.StringVar(value=str(_price))
+        _qv = tk.StringVar(value="0")
+        ttk.Entry(bgrid, textvariable=_pv, width=8).grid(row=_i, column=1, padx=6, pady=1)
+        ttk.Entry(bgrid, textvariable=_qv, width=6).grid(row=_i, column=2, padx=6, pady=1)
+        box_rows.append((_name, _pv, _qv))
+    pf = ttk.Frame(box_frame)
+    pf.pack(anchor="w", pady=(8, 4))
+    ttk.Label(pf, text="박스 가격(코인): ").pack(side="left")
+    box_price_var = tk.StringVar(value="")
+    ttk.Entry(pf, textvariable=box_price_var, width=10).pack(side="left")
+    ttk.Button(pf, text="계산", command=lambda: _calc_box()).pack(side="left", padx=8)
+    box_result = ttk.Label(box_frame, text="", font=("", 10), justify="left")
+    box_result.pack(anchor="w", pady=(6, 0))
+
+    def _calc_box():
+        total = 0.0
+        for _name, _pv, _qv in box_rows:
+            try:
+                total += float(_pv.get() or 0) * float(_qv.get() or 0)
+            except ValueError:
+                pass
+        try:
+            price = float(box_price_var.get() or 0)
+        except ValueError:
+            price = 0
+        if total <= 0:
+            box_result.config(text="구성품 개수를 입력하세요.", foreground="#999")
+            return
+        if price <= 0:
+            box_result.config(text=f"총 단품 가치: {total:,.0f} 코인 "
+                                   f"(박스 가격을 넣으면 할인율 계산)", foreground="#333")
+            return
+        disc = (1 - price / total) * 100
+        ratio = total / price
+        if disc >= 50:
+            verdict, col = "🔥 매우 좋음 (즉시 구매급)", "#2a7a3a"
+        elif disc >= 30:
+            verdict, col = "👍 좋음", "#2a7a3a"
+        elif disc >= 10:
+            verdict, col = "🆗 무난", "#a06020"
+        else:
+            verdict, col = "👎 비효율 (단품/세일이 나음)", "#b03030"
+        box_result.config(
+            text=(f"총 단품 가치 {total:,.0f}코인  vs  박스 {price:,.0f}코인\n"
+                  f"할인율 {disc:.0f}%  (가치비 {ratio:.2f}배)  →  {verdict}"),
+            foreground=col)
+
+    def _mb_switch():
+        if mb_mode.get() == "box":
+            tier_frame.pack_forget()
+            box_frame.pack(fill="both", expand=True)
+        else:
+            box_frame.pack_forget()
+            tier_frame.pack(fill="both", expand=True)
+    tier_frame.pack(fill="both", expand=True)
+
     # ===== 오늘 할 일 대시보드 (레이드·이벤트·알·리서치 한눈에) =====
     # 모든 일정 state 가 만들어진 뒤(여기) 구성 → notebook.insert 로 일정 그룹 앞으로 이동
     dash_tab = ttk.Frame(notebook, padding=(10, 8))
@@ -6670,6 +6862,23 @@ def print_routine_cli():
     print("\n(GUI '오늘 할 일' 탭에서는 체크 상태가 저장되고 매일/매주 자동 초기화됩니다.)")
 
 
+def print_maxtier_cli():
+    """--maxtier: 다이맥스/거다이맥스 배틀 추천 티어 출력."""
+    print(f"=== 다이맥스/거다이맥스 배틀 추천 (참고용 · {MAXBATTLE_UPDATED} 기준) ===")
+    print("출처: GO Hub / doctorpokegogo. 맥스배틀은 레이드와 역학이 달라 별도 큐레이션.\n")
+    print("[⭐ 최우선 S급 어택커]")
+    print("  " + ", ".join(MAXBATTLE_S_ATTACKERS))
+    print("\n[⚔️ 타입별 추천 어택커]")
+    for ty, name, mv in MAXBATTLE_ATTACKERS_BY_TYPE:
+        print(f"  {ty:<4} {name:<16} {mv}")
+    print("\n[🛡️ 탱커] (0.5초 평타 = 변신 빠름 = 덜 맞음)")
+    for name, mv, why in MAXBATTLE_TANKS:
+        print(f"  {name:<18} {mv:<14} {why}")
+    print("\n[➕ 힐러] (높은 HP → 회복량 ↑)")
+    for name, why in MAXBATTLE_HEALERS:
+        print(f"  {name:<10} {why}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="Pokemon GO PvP 개체값 리그 랭커",
                                  formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -6693,6 +6902,8 @@ def main():
                     help="즐겨찾기 포켓몬의 PvE 투자 우선순위 분석")
     ap.add_argument("--routine", action="store_true",
                     help="매일/주간 챙겨야 할 포고 루틴 체크리스트 출력")
+    ap.add_argument("--maxtier", action="store_true",
+                    help="다이맥스/거다이맥스 배틀 추천 티어 출력")
     ap.add_argument("--level", type=float, default=40,
                     help="--attackers/--invest 공격자 레벨 (기본 40)")
     ap.add_argument("-n", type=int, default=20,
@@ -6701,6 +6912,10 @@ def main():
 
     if args.routine:
         print_routine_cli()
+        return
+
+    if args.maxtier:
+        print_maxtier_cli()
         return
 
     if args.refresh:
