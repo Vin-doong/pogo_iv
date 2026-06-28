@@ -2975,6 +2975,18 @@ def run_gui(gm):
 
     root = tk.Tk()
     root.title("Pokemon GO 개체값 리그 랭커")
+    # 창/작업표시줄 아이콘 (몬스터볼) — 스크립트 폴더의 icon.ico 사용, 없으면 무시
+    try:
+        _icon_dir = os.path.dirname(os.path.abspath(__file__))
+        _ico = os.path.join(_icon_dir, "icon.ico")
+        if os.path.exists(_ico):
+            root.iconbitmap(default=_ico)
+        else:
+            _png = os.path.join(_icon_dir, "icon.png")
+            if os.path.exists(_png):
+                root.iconphoto(True, tk.PhotoImage(file=_png))
+    except Exception:
+        pass
     geom = settings.get("geometry", "1500x920")
     try:
         root.geometry(geom)

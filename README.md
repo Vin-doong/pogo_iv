@@ -69,7 +69,7 @@ python pogo_iv.py --routine                 # 매일/주간 챙길 포고 루틴
 python pogo_iv.py --maxtier                  # 다이맥스/거다이맥스 배틀 추천 티어
 ```
 
-Windows에서는 `포켓몬개체값.bat`을 더블클릭하여 실행할 수 있습니다.
+Windows에서는 `PogoTool.bat`을 더블클릭하여 실행할 수 있습니다. (바탕화면 `PogoTool` 바로가기는 몬스터볼 아이콘으로 생성됨.) 실행 중 창·작업표시줄 아이콘은 `icon.ico`(몬스터볼)를 사용합니다.
 
 ## 디스코드 봇 (자연어 인터페이스)
 
