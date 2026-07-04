@@ -2763,15 +2763,81 @@ def ingame_search_strings(iv, name=None):
     return exact, near
 
 
-# 자주 쓰는 인게임 검색어 (참고)
+# ── 인게임 검색어 사전 (카테고리 → [(설명, 검색어)]) ──
+# 포켓몬 GO 검색창에 그대로 붙여넣어 쓰는 필터. & = 그리고, 쉼표 = 또는, ! = 제외.
+# 범위: '3-4' = 3~4, '3-' = 3 이상, '-1' = 1 이하.
+SEARCH_LIBRARY = [
+    ("개체값 / 어필 등급", [
+        ("100% 개체값 (⭐⭐⭐)", "4*"),
+        ("82% 이상 (⭐⭐ 이상)", "3-4*"),
+        ("3성만 (82~98%)", "3*"),
+        ("2성 (66~80%)", "2*"),
+        ("1성 (51~64%)", "1*"),
+        ("최악 0성 (0~49%)", "0*"),
+        ("나쁜 것 (0~1성) — 전송용", "0-1*"),
+        ("어중간 이하 (0~2성)", "0-2*"),
+    ]),
+    ("세부 개체값 (공/방/체)", [
+        ("공격 0 (PvP 저공격)", "0공격"),
+        ("공격 0~1", "-1공격"),
+        ("공격 15 (만렙)", "15공격"),
+        ("방어 15", "15방어"),
+        ("방어 14~15", "14-방어"),
+        ("체력 15", "15hp"),
+        ("체력 14~15", "14-hp"),
+        ("PvP 최적 근사 (저공격·고방체)", "-1공격&14-방어&14-hp"),
+        ("고방체(방·체 13 이상)", "13-방어&13-hp"),
+    ]),
+    ("상태 / 속성", [
+        ("색이 다른 (이로치)", "색이다른"),
+        ("교환 가능", "교환가능"),
+        ("행운 (럭키)", "행운"),
+        ("즐겨찾기 ★", "즐겨찾기"),
+        ("그림자", "그림자"),
+        ("정화된", "정화"),
+        ("진화 가능", "진화"),
+        ("코스튬 착용", "코스튬"),
+        ("전설", "전설"),
+        ("환상", "환상"),
+        ("수비 중 (체육관)", "수비중"),
+    ]),
+    ("배틀 / 레이드 / 맥스", [
+        ("다이맥스 가능", "다이맥스"),
+        ("거다이맥스 가능", "거다이맥스"),
+        ("배틀 사용 가능", "배틀"),
+        ("레이드 획득", "레이드"),
+        ("리서치 획득", "필드리서치"),
+        ("이벤트 획득", "이벤트"),
+    ]),
+    ("레벨 / 종류", [
+        ("레벨 40 이상", "40-"),
+        ("레벨 1~30", "1-30"),
+        ("메가진화 가능", "메가진화"),
+        ("4세대(신오)", "세대4"),
+        ("아이템 소지", "아이템"),
+    ]),
+    ("정리(박사 전송용) 조합", [
+        ("약한 것만 (0~2성·즐겨찾기·교환 제외)", "0-2*&!즐겨찾기&!교환가능"),
+        ("100%도 즐겨찾기도 아닌 것", "!4*&!즐겨찾기"),
+        ("그림자 아닌 저성능", "0-1*&!그림자&!즐겨찾기"),
+        ("교환용 골라내기 (색다른·행운 제외)", "교환가능&!색이다른&!행운"),
+    ]),
+    ("연산자 사용법", [
+        ("그리고 (AND)", "뮤&4*"),
+        ("또는 (OR)", "물,불꽃"),
+        ("제외 (NOT)", "!전설"),
+    ]),
+]
+
+# 하위호환: 평평한 리스트가 필요한 곳(예: --search 하단 참고 출력)
 COMMON_SEARCH_TERMS = [
     ("100% 개체값", "4*"),
     ("최악(0%)", "0*"),
-    ("PvP용 저공격", "0-1공격"),
+    ("PvP용 저공격", "0공격"),
     ("색이 다른(이로치)", "색이다른"),
     ("교환 가능", "교환가능"),
     ("즐겨찾기", "즐겨찾기"),
-    ("강화 가능(사탕XL 불필요)", "1-40"),
+    ("전송용 잡몹", "0-2*&!즐겨찾기&!교환가능"),
 ]
 
 
@@ -6575,6 +6641,65 @@ def run_gui(gm):
     for _nm, _why in MAXBATTLE_HEALERS:
         _tline(f"{_nm}  —  {_why}")
 
+    # ===== 검색어 탭 (인게임 검색 문자열 모음 · 복사) =====
+    search_tab = ttk.Frame(notebook, padding=(10, 8))
+    notebook.add(search_tab, text="  검색어  ")
+
+    sh_head = ttk.Frame(search_tab)
+    sh_head.pack(fill="x", pady=(0, 4))
+    ttk.Label(sh_head, text="포켓몬GO 인게임 검색어 — 오른쪽 [복사] 후 게임 검색창에 붙여넣기",
+              font=("", 11, "bold")).pack(side="left")
+    sh_toast = tk.StringVar(value="")
+    ttk.Label(sh_head, textvariable=sh_toast, font=("", 9),
+              foreground="#2a7a3a").pack(side="right")
+    ttk.Label(search_tab,
+              text="& = 그리고 · 쉼표(,) = 또는 · ! = 제외 · 범위: 3-4 / 3-(이상) / -1(이하)",
+              font=("", 8), foreground="#888").pack(anchor="w", pady=(0, 6))
+
+    sh_canvas = tk.Canvas(search_tab, highlightthickness=0)
+    sh_vsb = ttk.Scrollbar(search_tab, orient="vertical", command=sh_canvas.yview)
+    sh_canvas.configure(yscrollcommand=sh_vsb.set)
+    sh_vsb.pack(side="right", fill="y")
+    sh_canvas.pack(side="left", fill="both", expand=True)
+    sh_body = ttk.Frame(sh_canvas)
+    sh_win = sh_canvas.create_window((0, 0), window=sh_body, anchor="nw")
+    sh_body.bind("<Configure>",
+                 lambda e: sh_canvas.configure(scrollregion=sh_canvas.bbox("all")))
+    sh_canvas.bind("<Configure>", lambda e: sh_canvas.itemconfigure(sh_win, width=e.width))
+
+    def _sh_wheel(e):
+        sh_canvas.yview_scroll(int(-(e.delta or 0) / 120), "units")
+    sh_canvas.bind("<Enter>", lambda e: sh_canvas.bind_all("<MouseWheel>", _sh_wheel))
+    sh_canvas.bind("<Leave>", lambda e: sh_canvas.unbind_all("<MouseWheel>"))
+
+    _sh_toast_after = [None]
+
+    def _sh_copy(term):
+        root.clipboard_clear()
+        root.clipboard_append(term)
+        sh_toast.set(f"복사됨: {term}")
+        if _sh_toast_after[0]:
+            try:
+                root.after_cancel(_sh_toast_after[0])
+            except Exception:
+                pass
+        _sh_toast_after[0] = root.after(2500, lambda: sh_toast.set(""))
+
+    for _cat, _items in SEARCH_LIBRARY:
+        ttk.Label(sh_body, text=_cat, font=("", 11, "bold"),
+                  foreground="#222").pack(anchor="w", pady=(12, 3))
+        for _label, _term in _items:
+            _row = ttk.Frame(sh_body)
+            _row.pack(anchor="w", fill="x", padx=(10, 0), pady=1)
+            ttk.Button(_row, text="복사", width=6,
+                       command=lambda t=_term: _sh_copy(t)).pack(side="left")
+            _ent = ttk.Entry(_row, width=34)
+            _ent.insert(0, _term)
+            _ent.configure(state="readonly")
+            _ent.pack(side="left", padx=(6, 8))
+            ttk.Label(_row, text=_label, font=("", 9),
+                      foreground="#555").pack(side="left")
+
     # ===== 오늘 할 일 대시보드 (레이드·이벤트·알·리서치 한눈에) =====
     # 모든 일정 state 가 만들어진 뒤(여기) 구성 → notebook.insert 로 일정 그룹 앞으로 이동
     dash_tab = ttk.Frame(notebook, padding=(10, 8))
@@ -6900,7 +7025,7 @@ def run_gui(gm):
         # PvE (레이드·맥스배틀)
         raid_tab, rkt_tab, invest_tab, maxbox_tab,
         # 공통 (게임 전반 정보·유틸)
-        dash_tab, type_tab, events_tab, raid_sched_tab, eggs_tab, research_tab,
+        dash_tab, search_tab, type_tab, events_tab, raid_sched_tab, eggs_tab, research_tab,
     ]
     for _idx, _t in enumerate(tab_order):
         try:
@@ -7088,6 +7213,17 @@ def print_search_cli(gm, name, league=None, max_level=DEFAULT_MAX_LEVEL):
         print(f"   {label:<22} {term}")
 
 
+def print_searchhelp_cli():
+    """--searchhelp: 인게임 검색어 사전 전체 출력 (복사용)."""
+    print("=== 포켓몬GO 인게임 검색어 모음 (복사해서 검색창에 붙여넣기) ===")
+    print("& = 그리고 · 쉼표 = 또는 · ! = 제외 · 범위: 3-4 / 3-(이상) / -1(이하)\n")
+    for cat, items in SEARCH_LIBRARY:
+        print(f"[{cat}]")
+        for label, term in items:
+            print(f"   {term:<28} {label}")
+        print()
+
+
 def print_fusion_cli(bundles=None, goal=FUSION_GOAL_DEFAULT):
     """--fusion: 합체/변신 에너지 공식·표 + (선택) 기대 에너지 추정."""
     print("=== 합체/변신 에너지 계산 (네크로즈마·큐레무·버드렉스 등) ===")
@@ -7131,6 +7267,8 @@ def main():
                     help="다이맥스/거다이맥스 배틀 추천 티어 출력")
     ap.add_argument("--search", metavar="포켓몬",
                     help="베스트 개체값 인게임 검색 문자열 생성 (--league 로 리그 한정 가능)")
+    ap.add_argument("--searchhelp", action="store_true",
+                    help="인게임 검색어 사전 전체 출력 (복사용)")
     ap.add_argument("--fusion", nargs="?", const=-1, type=int, metavar="꾸러미수",
                     help="합체/변신 에너지 공식·표 출력 (보상 꾸러미 수를 주면 기대 에너지 추정)")
     ap.add_argument("--level", type=float, default=40,
@@ -7145,6 +7283,10 @@ def main():
 
     if args.maxtier:
         print_maxtier_cli()
+        return
+
+    if args.searchhelp:
+        print_searchhelp_cli()
         return
 
     if args.fusion is not None:
