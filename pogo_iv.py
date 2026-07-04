@@ -1104,6 +1104,21 @@ MAXBATTLE_HEALERS = [
     ("푸크린",   "값싼 HP 힐러 대용"),
 ]
 
+# ── 출시된 다이맥스/거다이맥스 로스터 (참고 · 2026-07 기준) ──
+# 거다이맥스 = 6성 맥스배틀 전용, 고유 G-Max 무브. 다이맥스 = 일반 맥스배틀.
+# 데이터에는 없는 큐레이션 목록 — 신규 출시 시 이 두 리스트만 갱신.
+# 거다이맥스 17종 (출처: Dexerto/locachange 2026)
+MAXBATTLE_GIGANTAMAX = [
+    "이상해꽃", "리자몽", "거북왕", "버터플", "피카츄", "나옹", "괴력몬",
+    "팬텀", "킹크랩", "라프라스", "잠만보", "더스트나", "고릴타",
+    "에이스번", "인텔리레온", "스트린더", "오롱털",
+]
+# 다이맥스 (일반) — 대규모 순환 풀이라 '확인된 주요 종'만. 게임 내 '다이맥스' 검색으로 보유분 확인 권장.
+MAXBATTLE_DYNAMAX = [
+    "이상해씨", "파이리", "꼬부기", "부우부", "랄토스", "세꿀버리", "콩둘기",
+    "오케이징", "달콤아", "흥나숭", "럭키", "모노두", "깨봉이", "빈티나",
+]
+
 # ── 포켓몬샵 박스 효율 — 아이템 코인 기준가 (단품 환산, 참고용) ──
 # 세일/지역/시즌에 따라 변동. GUI 에서 편집 가능, 박스 가격 대비 할인율 계산용.
 SHOP_ITEM_PRICES = [
@@ -6641,6 +6656,17 @@ def run_gui(gm):
     for _nm, _why in MAXBATTLE_HEALERS:
         _tline(f"{_nm}  —  {_why}")
 
+    _tsec(f"🐋 출시된 거다이맥스 ({len(MAXBATTLE_GIGANTAMAX)}종)")
+    _tline("6성 맥스배틀 전용 · 고유 G-Max 무브. 보스가 약점이면 항상 최우선 딜러.", "#666")
+    for _i in range(0, len(MAXBATTLE_GIGANTAMAX), 6):
+        _tline("  ·  ".join(MAXBATTLE_GIGANTAMAX[_i:_i + 6]), "#2a5a8a")
+    _tsec("🔷 출시된 다이맥스 (주요)")
+    _tline("일반 맥스배틀. 순환 풀이라 전체는 게임 내 '다이맥스' 검색으로 보유분 확인.", "#666")
+    for _i in range(0, len(MAXBATTLE_DYNAMAX), 6):
+        _tline("  ·  ".join(MAXBATTLE_DYNAMAX[_i:_i + 6]))
+    _tline("※ 다이맥스/거다이맥스는 별도 종이 아니라 '전투 상태' — 종 자체는 왼쪽 목록에 이미 있음. "
+           "게임 검색창에 '다이맥스' / '거다이맥스' 입력 시 보유 개체가 걸러짐 (검색어 탭 참고).", "#888")
+
     # ===== 검색어 탭 (인게임 검색 문자열 모음 · 복사) =====
     search_tab = ttk.Frame(notebook, padding=(10, 8))
     notebook.add(search_tab, text="  검색어  ")
@@ -7180,6 +7206,11 @@ def print_maxtier_cli():
     print("\n[➕ 힐러] (높은 HP → 회복량 ↑)")
     for name, why in MAXBATTLE_HEALERS:
         print(f"  {name:<10} {why}")
+    print(f"\n[🐋 출시된 거다이맥스 {len(MAXBATTLE_GIGANTAMAX)}종]")
+    print("  " + ", ".join(MAXBATTLE_GIGANTAMAX))
+    print("\n[🔷 출시된 다이맥스 (주요)]")
+    print("  " + ", ".join(MAXBATTLE_DYNAMAX))
+    print("  ※ 다이맥스는 순환 풀이라 전체는 게임 내 '다이맥스' 검색으로 확인.")
 
 
 def print_search_cli(gm, name, league=None, max_level=DEFAULT_MAX_LEVEL):

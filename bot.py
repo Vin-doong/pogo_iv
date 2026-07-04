@@ -443,7 +443,7 @@ def max_battle_tier(category: str = "all") -> str:
     """다이맥스/거다이맥스 맥스배틀 추천 티어. "다이맥스 뭐 키워", "맥스배틀 탱커 추천", "거다이맥스 딜러" 질문에 호출.
 
     Args:
-        category: "어택커","탱커","힐러","all" 중 하나. 기본 all.
+        category: "어택커","탱커","힐러","로스터","all" 중 하나. 기본 all. ("로스터"=출시된 다이맥스/거다이맥스 종 목록)
 
     Returns:
         맥스배틀 추천 포켓몬 텍스트.
@@ -463,6 +463,10 @@ def max_battle_tier(category: str = "all") -> str:
         out.append("\n__힐러__ (높은 HP):")
         for nm, why in P.MAXBATTLE_HEALERS:
             out.append(f"  · {nm} — {why}")
+    if cat in ("all", "로스터", "roster", "목록", "종"):
+        out.append(f"\n__거다이맥스 {len(P.MAXBATTLE_GIGANTAMAX)}종__: " + ", ".join(P.MAXBATTLE_GIGANTAMAX))
+        out.append("__다이맥스(주요)__: " + ", ".join(P.MAXBATTLE_DYNAMAX)
+                   + " (순환 풀 — 전체는 게임 내 '다이맥스' 검색으로 확인)")
     return "\n".join(out)
 
 
