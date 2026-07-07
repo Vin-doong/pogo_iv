@@ -620,8 +620,10 @@ TOOLS = [league_info, analyze_user_iv, find_acquisition, top_counters, current_r
 TOOL_MAP = {fn.__name__: fn for fn in TOOLS}
 
 # 도구별 (파라미터명 → 타입 어노테이션) — 모델 인자 검증/형변환용 (시작 시 1회 계산)
+# eval_str=True: `from __future__ import annotations` 로 문자열이 된 어노테이션을 실제
+# 타입 객체(int, bool 등)로 평가해야 _clean_args 의 `is int` 검사가 동작함.
 _TOOL_PARAMS = {
-    name: {p.name: p.annotation for p in inspect.signature(fn).parameters.values()}
+    name: {p.name: p.annotation for p in inspect.signature(fn, eval_str=True).parameters.values()}
     for name, fn in TOOL_MAP.items()
 }
 
