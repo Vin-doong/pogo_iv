@@ -108,25 +108,121 @@ def _tool(fn):
             return f"[도구 오류] {type(e).__name__}: {e}"
     return wrapper
 
-@_tool
-def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15,
-                    best_buddy: bool = False) -> str:
-    """포켓몬의 IV(개체값) 분석 + 각 PvP 리그(리틀/슈퍼/하이퍼/마스터)에서의 순위/CP/최적 레벨.
+# 리그명 정규화 / 메타 랭킹 조회 — 두 도구가 공유
+_LEAGUE_TO_CAP = {
+    "리틀컵": ("all", 500), "슈퍼리그": ("all", 1500),
+    "하이퍼리그": ("all", 2500), "마스터리그": ("all", 10000),
+}
+_LEAGUE_ALIAS = {
+    "리틀": "리틀컵", "리틀컵": "리틀컵", "little": "리틀컵",
+    "슈퍼": "슈퍼리그", "슈퍼리그": "슈퍼리그", "great": "슈퍼리그", "super": "슈퍼리그",
+    "하이퍼": "하이퍼리그", "하이퍼리그": "하이퍼리그", "ultra": "하이퍼리그", "hyper": "하이퍼리그",
+    "마스터": "마스터리그", "마스터리그": "마스터리그", "master": "마스터리그",
+}
 
-    다음과 같은 질문에 모두 이 도구를 써:
-    - "X 슈퍼리그에서 1등 IV가 뭐야?" / "X의 최적 IV 조합?" (사용자 IV 안 줘도 호출 — 결과에 각 리그별 최적 IV가 포함됨)
-    - "X IV 0/15/14 어때?" / "이거 100% 좋아?" (사용자가 준 IV 분석)
-    - "X 슈퍼리그 갈만해?" / "X 어느 리그가 좋아?"
+
+_DEFAULT_LEAGUES = {"리틀컵", "슈퍼리그", "하이퍼리그", "마스터리그"}
+
+
+def _normalize_leagues(leagues):
+    """리그 입력 정규화. None/빈 리스트면 4대 메인 리그만(시즌 컵 제외)."""
+    if not leagues:
+        return _DEFAULT_LEAGUES
+    out = set()
+    for x in leagues:
+        if not isinstance(x, str):
+            continue
+        key = x.strip()
+        canon = _LEAGUE_ALIAS.get(key) or _LEAGUE_ALIAS.get(key.lower())
+        if canon:
+            out.add(canon)
+    return out or _DEFAULT_LEAGUES
+
+
+def _meta_rank_for_sid(league_name: str, sid: str):
+    """전체 메타 랭킹에서 이 종의 위치. 반환: (rank, total, score) / ("권외", total, 0) / None."""
+    key = _LEAGUE_TO_CAP.get(league_name)
+    if not key:
+        return None
+    ranking = P.load_league_rankings(key[0], key[1])
+    if not ranking:
+        return None
+    for i, e in enumerate(ranking, 1):
+        if e.get("speciesId") == sid:
+            return (i, len(ranking), e.get("score", 0))
+    return ("권외", len(ranking), 0)
+
+
+@_tool
+def league_info(names: list[str], leagues: list[str] = None) -> str:
+    """포켓몬의 PvP 리그별 정보(최적 IV · 메타 랭킹 · 최적 레벨/CP).
+
+    **사용자가 IV를 명시하지 않았을 때 무조건 이 도구를 써.** analyze_user_iv 는 IV 없으면 절대 호출 금지.
+
+    여러 포켓몬을 한 번에 물으면 names 리스트에 다 넣어서 한 번 호출. (예: ["플라제스","탱탱겔","마릴리","아머까오"])
+    마리당 따로 호출하면 안 됨.
 
     Args:
-        name: 한글 포켓몬 이름. "누오", "마릴리", "메가 갸라도스", "그림자 뮤츠" 같은 폼 prefix 지원.
-        atk: 사용자 공격 IV (0~15). 사용자가 IV 안 알려줬으면 15 그대로 둬.
-        defense: 사용자 방어 IV (0~15). 사용자가 IV 안 알려줬으면 15 그대로 둬.
-        hp: 사용자 체력 IV (0~15). 사용자가 IV 안 알려줬으면 15 그대로 둬.
+        names: 한글 포켓몬 이름 리스트. "누오", "메가 갸라도스", "그림자 뮤츠" 같은 폼 prefix 지원.
+        leagues: 보고 싶은 리그 이름 리스트. 빈 리스트/생략 시 4리그 전부.
+                 받는 값: "리틀"/"슈퍼"/"하이퍼"/"마스터" 또는 풀네임("슈퍼리그" 등).
+
+    Returns:
+        포켓몬별 · 리그별 최적 IV / 메타 랭킹 / 레벨 / CP 텍스트.
+    """
+    if isinstance(names, str):
+        names = [names]
+    if not names:
+        return "포켓몬 이름이 비어있음."
+    league_filter = _normalize_leagues(leagues)
+
+    blocks = []
+    for raw_name in names:
+        p, alts = _find(raw_name)
+        if not p:
+            blocks.append(f"**{raw_name}** — 찾을 수 없음")
+            continue
+        rows, _ = P.analyze_pokemon(p, (15, 15, 15), max_level=50)
+        sid = p["speciesId"]
+        block = [f"**{_display(p)}**"]
+        for league_name, lvl, cp, sp, _rank, _pct, top_iv in rows:
+            if league_filter and league_name not in league_filter:
+                continue
+            if lvl is None:
+                block.append(f"  · {league_name}: 분석 불가 (CP 캡 초과)")
+                continue
+            top_iv_str = f"{top_iv[0]}/{top_iv[1]}/{top_iv[2]}" if top_iv else "?"
+            meta = _meta_rank_for_sid(league_name, sid)
+            if meta and meta[0] != "권외":
+                meta_part = f" · 메타 **{meta[0]}위/{meta[1]}종** (점수 {meta[2]:.1f})"
+            elif meta:
+                meta_part = f" · 메타 권외 ({meta[1]}종 밖)"
+            else:
+                meta_part = ""
+            block.append(f"  · **{league_name}**: 최적 IV `{top_iv_str}` · Lv{lvl} CP{cp}{meta_part}")
+        if alts:
+            block.append(f"  _(다른 후보: {', '.join(alts[:3])})_")
+        blocks.append("\n".join(block))
+    return "\n\n".join(blocks)
+
+
+@_tool
+def analyze_user_iv(name: str, atk: int, defense: int, hp: int, leagues: list[str] = None,
+                    best_buddy: bool = False) -> str:
+    """사용자가 명시한 **특정 IV값**의 리그별 분석. 사용자가 "내 거 14/13/15인데 어때?" 처럼 IV를 직접 알려준 경우에만 호출.
+
+    **사용자가 IV를 안 알려줬으면 이 도구 절대 부르지 마.** 그땐 league_info 써.
+
+    Args:
+        name: 한글 포켓몬 이름.
+        atk: 공격 IV (0~15) — 사용자가 알려준 값.
+        defense: 방어 IV (0~15) — 사용자가 알려준 값.
+        hp: 체력 IV (0~15) — 사용자가 알려준 값.
+        leagues: 보고 싶은 리그 리스트. 생략 시 4대 메인 리그(리틀/슈퍼/하이퍼/마스터).
         best_buddy: 베스트 친구(절친) 보너스로 Lv51 까지 강화 가능할 때 True. 기본은 False(Lv50 캡, PvPoke 기준). 사용자가 "베스트버디"/"절친"/"Lv51" 언급 시에만 True.
 
     Returns:
-        리그별로 사용자 IV 의 순위/CP + 그 리그의 최적(1등) IV 조합 텍스트.
+        사용자 IV 의 리그별 랭크 / CP / Lv + 비교용 그 리그 최적 IV.
     """
     p, alts = _find(name)
     if not p:
@@ -134,51 +230,34 @@ def analyze_pokemon(name: str, atk: int = 15, defense: int = 15, hp: int = 15,
     ivs = (max(0, min(15, atk)), max(0, min(15, defense)), max(0, min(15, hp)))
     # 기본 캡은 Lv50 (PvPoke/데스크톱 앱과 일치). 베스트버디일 때만 Lv51.
     max_level = 51.0 if best_buddy else P.DEFAULT_MAX_LEVEL
-    rows, best = P.analyze_pokemon(p, ivs, max_level=max_level)
+    rows, _best_all = P.analyze_pokemon(p, ivs, max_level=max_level)
     label = P.appraisal_label(ivs)
     sid = p["speciesId"]
-
-    # 리그명 → (cup_id, cap) — pogo_iv 의 LEAGUES 이름과 정확히 일치 (공백 없음)
-    league_to_cap = {
-        "리틀컵": ("all", 500), "슈퍼리그": ("all", 1500),
-        "하이퍼리그": ("all", 2500), "마스터리그": ("all", 10000),
-    }
-
-    def _meta_rank_for(league_name: str):
-        """전체 메타 랭킹에서 이 종의 위치. 반환: (rank, total, score) 또는 None."""
-        key = league_to_cap.get(league_name)
-        if not key:
-            return None
-        ranking = P.load_league_rankings(key[0], key[1])
-        if not ranking:
-            return None
-        for i, e in enumerate(ranking, 1):
-            if e.get("speciesId") == sid:
-                return (i, len(ranking), e.get("score", 0))
-        return ("권외", len(ranking), 0)
+    league_filter = _normalize_leagues(leagues)
 
     cap_note = "Lv51·베스트버디" if best_buddy else "Lv50 캡"
     lines = [f"**{_display(p)}** — {label} (입력 IV {ivs[0]}/{ivs[1]}/{ivs[2]} · {cap_note})"]
+    shown = []
     for league_name, lvl, cp, sp, rank, pct, top_iv in rows:
+        if league_filter and league_name not in league_filter:
+            continue
         if lvl is None:
             lines.append(f"  · {league_name}: 분석 불가 (CP 캡 초과)")
             continue
         top_iv_str = f"{top_iv[0]}/{top_iv[1]}/{top_iv[2]}" if top_iv else "?"
-        meta = _meta_rank_for(league_name)
-        meta_line = ""
-        if meta:
-            if meta[0] == "권외":
-                meta_line = f"메타 랭킹: 권외 (전체 {meta[1]}종 밖)"
-            else:
-                meta_line = f"메타 랭킹: **{meta[0]}위/{meta[1]}종** (점수 {meta[2]:.1f})"
-        iv_line = f"입력 IV {ivs[0]}/{ivs[1]}/{ivs[2]} 는 이 종의 4096개 IV조합 중 #{rank} ({pct:.1f}%) · 그 리그 최적 IV는 {top_iv_str}"
-        block = f"  · **{league_name}**: Lv{lvl} CP{cp}"
-        if meta_line:
-            block += f"\n     - {meta_line}"
-        block += f"\n     - {iv_line}"
+        meta = _meta_rank_for_sid(league_name, sid)
+        if meta and meta[0] != "권외":
+            meta_part = f" · 메타 {meta[0]}위/{meta[1]}종"
+        elif meta:
+            meta_part = f" · 메타 권외"
+        else:
+            meta_part = ""
+        block = f"  · **{league_name}**: Lv{lvl} CP{cp}{meta_part}\n     - 내 IV 순위 #{rank}/4096 ({pct:.1f}%) · 그 리그 최적 IV `{top_iv_str}`"
         lines.append(block)
-    if best:
-        lines.append(f"\n_(입력 IV {ivs[0]}/{ivs[1]}/{ivs[2]} 기준 가장 잘 활용되는 리그: {best[0]}, {best[5]:.1f}%)_")
+        shown.append((league_name, pct))
+    if shown:
+        best = max(shown, key=lambda x: x[1])
+        lines.append(f"\n_(가장 잘 맞는 리그: {best[0]}, {best[1]:.1f}%)_")
     if alts:
         lines.append(f"_다른 후보_: {', '.join(alts[:3])}")
     return "\n".join(lines)
@@ -536,7 +615,7 @@ def daily_routine() -> str:
 
 
 # Gemini가 호출 가능한 도구 목록
-TOOLS = [analyze_pokemon, find_acquisition, top_counters, current_raids, current_events, league_meta,
+TOOLS = [league_info, analyze_user_iv, find_acquisition, top_counters, current_raids, current_events, league_meta,
          type_attackers, investment_priority, max_battle_tier, search_string, fusion_energy, daily_routine]
 TOOL_MAP = {fn.__name__: fn for fn in TOOLS}
 
@@ -572,37 +651,37 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """너는 포켓몬 GO 도우미 봇이야. 한국 트레이너에게 한국어로 답변해.
 
-원칙:
-- 사용자의 질문 의도를 파악해서 반드시 적절한 도구(tool)를 호출해. 추측이나 일반 지식으로 답하지 마.
-- 도구가 "[도구 오류]" 로 시작하는 결과를 주면, 그 오류를 그대로 전달하지 말고 사용자한테 친근하게 안내해.
-- 도구 결과를 그대로 던지지 말고, 핵심을 요약하거나 친근하게 다듬어서 답해.
-- 답변은 디스코드 메시지로 가니까 너무 길게 쓰지 마. 보통 5~10줄 안쪽.
-- 마크다운(**, `, 리스트) 사용 가능. 이모지 적당히 OK.
-- 포켓몬 이름은 항상 한글로. (예: Rayquaza ❌ → 레쿠쟈 ✅)
+# 절대 규칙 (이걸 어기면 응답이 부정확해짐)
+1. 반드시 도구(tool)를 호출해서 그 결과로만 답해. **채팅 메모리·일반 지식으로 절대 답하지 마.** 이전 답변을 기억해서 다시 쓰는 것도 금지.
+2. 사용자가 IV(개체값) 숫자를 명시하지 않았으면 `analyze_user_iv` 를 **절대** 부르지 마. `league_info` 를 써.
+3. 여러 포켓몬을 한 번에 물으면 (예: "플라제스, 탱탱겔, 마릴리 슈퍼하이퍼 알려줘"), `league_info(names=["플라제스","탱탱겔","마릴리"], leagues=["슈퍼","하이퍼"])` 처럼 **한 번에 호출**. 마리당 따로 부르면 안 됨.
+4. 도구 결과를 가공하긴 하되, **숫자·IV값·랭킹은 절대 바꾸거나 추측하지 마**. 도구가 준 그대로 전달.
 
-도구 선택 가이드:
-- "X 슈퍼/하이퍼 1등 IV", "X 최적 IV", "X 100% 좋아?", "X 어느 리그 갈만?" → analyze_pokemon
-- "X 어디서 잡아?", "X 알에 있어?", "X 레이드 떠?" → find_acquisition
-- "X 카운터", "X 잡으려면 뭐 데려가?" → top_counters
-- "오늘 레이드", "5성 뭐 있어?", "한국 레이드" → current_raids
-- "이벤트", "커뮤니티 데이", "오늘 뭐 해?" → current_events
-- "슈퍼/하이퍼 메타", "강한 포켓몬 순위" → league_meta
-- "불꽃/드래곤 딜러 추천", "최고 X타입 어태커" → type_attackers
-- "뭐 키울까", "투자 추천", "내 포켓몬 중 뭐가 좋아" → investment_priority
-- "다이맥스 뭐 키워", "맥스배틀 탱커/힐러 추천", "거다이맥스 딜러" → max_battle_tier
-- "X 베스트 개체값 검색어", "좋은거 찾는 검색법" → search_string
-- "합체 에너지", "네크로즈마 에너지 몇 번" → fusion_energy
-- "데일리 루틴", "매일 뭐 해야 해" → daily_routine
+# 도구 선택 가이드
+- "X 슈퍼/하이퍼 1등 IV", "X 최적 IV", "X 어느 리그 갈만?", "X 슈퍼리그 어때?", "X 메타에서 몇 등?" → `league_info`
+- "X IV 14/13/15 어때?", "내 거 100% 좋아?" (사용자가 IV 숫자를 명시한 경우만) → `analyze_user_iv`
+- "X 어디서 잡아?", "X 알에 있어?", "X 레이드 떠?" → `find_acquisition`
+- "X 카운터", "X 잡으려면 뭐 데려가?" → `top_counters`
+- "오늘 레이드", "5성 뭐 있어?", "한국 레이드" → `current_raids`
+- "이벤트", "커뮤니티 데이", "오늘 뭐 해?" → `current_events`
+- "슈퍼/하이퍼 메타 TOP", "강한 포켓몬 순위" → `league_meta`
+- "불꽃/드래곤 딜러 추천", "최고 X타입 어태커" → `type_attackers`
+- "뭐 키울까", "투자 추천", "내 포켓몬 중 뭐가 좋아" → `investment_priority`
+- "다이맥스 뭐 키워", "맥스배틀 탱커/힐러 추천", "거다이맥스 딜러" → `max_battle_tier`
+- "X 베스트 개체값 검색어", "좋은거 찾는 검색법" → `search_string`
+- "합체 에너지", "네크로즈마 에너지 몇 번" → `fusion_energy`
+- "데일리 루틴", "매일 뭐 해야 해" → `daily_routine`
 
-중요 — "순위" 단어의 두 가지 의미를 정확히 구분해:
-- **메타 랭킹**: "X가 슈퍼리그에서 몇 등?", "X의 리그 순위" → 전체 종 중 그 종의 등수 (analyze_pokemon 결과의 "메타 랭킹: N위/총개수")
-- **IV 순위**: "X 슈퍼리그 1등 IV?", "내 IV 어때?" → 그 종의 4096개 IV 조합 중 등수
+# "순위" 의 의미 구분
+- **메타 랭킹**: "X가 슈퍼리그에서 몇 등?" → 전체 종 중 그 종 등수. `league_info` 결과의 "메타 N위/M종" 그대로 전달.
+- **IV 순위**: "X IV 0/15/14 가 몇 등?" → 그 종의 4096개 IV 조합 중 순위. `analyze_user_iv` 만 다룸.
+사용자가 IV 숫자 없이 "리그 순위" 물으면 거의 항상 **메타 랭킹**이야.
 
-사용자가 IV 를 명시 안 하고 "X 슈퍼리그 순위?" 처럼 묻는 건 거의 항상 **메타 랭킹** 을 묻는 거야. IV 순위는 IV 가 주제일 때만 답해.
-
-analyze_pokemon 결과에 메타 랭킹이 명확히 표시되니까 (예: "메타 랭킹: 2위/1234종"), 사용자가 리그 순위 물으면 그 숫자를 그대로 전달해. "이 종 IV 순위 #2757" 같은 내용을 메타 순위인 양 답하면 안 돼.
-
-여러 리그 한 번에 물어보면 (예: "슈퍼랑 하이퍼"), analyze_pokemon 한 번 호출하면 모든 리그 결과 다 나오니까 다시 부를 필요 없어.
+# 답변 형식
+- 디스코드 메시지니까 너무 길게 쓰지 마. 보통 5~12줄.
+- 마크다운(**, `, 리스트) 사용 OK. 이모지 적당히 OK.
+- 포켓몬 이름은 한글로. (예: Rayquaza ❌ → 레쿠쟈 ✅)
+- 도구가 "[도구 오류]" 로 시작하는 결과를 주면, 그 오류를 그대로 전달하지 말고 친근하게 안내해.
 """
 
 
