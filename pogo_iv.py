@@ -354,6 +354,20 @@ CPM = [
     0.83530001, 0.837800015, 0.8403, 0.842800015, 0.84529999,
 ]
 
+# PvP 랭킹(rank_all) 전용 CPM — 반레벨은 PvPoke 방식으로 재계산.
+# 배경: 위 CPM 은 Niantic 공식 반레벨 값(인게임 CP·개체값 역추적용, 정확).
+# 그런데 PvPoke·PoGoMate·GoStadium·pvpivs 등 PvP 커뮤니티 도구는 반레벨 CPM 을
+# 인접 정수레벨의 '제곱평균' sqrt((cpm_lo^2 + cpm_hi^2)/2) 로 계산한다
+# (PvPoke Pokemon.js 소스에서 확인). 이 값이 공식값보다 아주 살짝 낮아,
+# CP 1500/2500 캡 경계에서 벌크형(저공격) IV 가 반레벨에 한 칸 더 앉을 수 있어
+# '최적 IV' 1등이 달라진다. 커뮤니티와 최적 IV 를 일치시키려면 랭킹은 이 표를 쓴다.
+# (정수레벨 값은 공식과 동일 — 마스터리그 등 정수레벨 결과는 영향 없음.)
+CPM_PVP = [
+    CPM[i] if i % 2 == 0
+    else ((CPM[i - 1] ** 2 + CPM[i + 1] ** 2) / 2) ** 0.5
+    for i in range(len(CPM))
+]
+
 # 베스트 친구 보너스 (+1 레벨) 없이 일반적으로 도달 가능한 최대 레벨.
 # PvPoke, pvpivs, pokemongo-get 등 주요 사이트가 모두 Lv50 을 기본 캡으로 사용.
 # Best Buddy 활성 포켓몬은 CLI 의 --max-level 51 로 따로 지정.
@@ -2395,8 +2409,9 @@ def best_level_under_cap(base, ivs, cp_cap, max_idx):
 
 def rank_all(base, cp_cap, max_idx):
     # 핫루프: 지역 바인딩 + 인라인으로 함수 호출 오버헤드 제거
+    # 랭킹은 PvPoke 방식(반레벨 제곱평균) CPM 을 써서 커뮤니티 최적 IV 와 일치시킨다.
     atk_b, def_b, hp_b = base["atk"], base["def"], base["hp"]
-    cpm_table = CPM
+    cpm_table = CPM_PVP
     results = []
     append = results.append
 
